@@ -193,10 +193,6 @@ createReadChunks <- function(f, chunkSize, label, ouputDir){
 }
 
 
-
-
-
-
 tmpFile <- function(){ paste0(paste0(stringi::stri_rand_strings(30, 1, '[A-Za-z0-9]'), collapse = ''), '.tmp') }
 
 
@@ -206,15 +202,6 @@ shortRead2DNAstringSet <- function(x){
   r
 }
 
-
-
-
-# representativeSeq <- function(s){
-#   if(length(s) == 1 | n_distinct(s) == 1) return(s[1])
-#   m <- as.matrix(stringdist::stringdistmatrix(s))
-#   d <- apply(m, 1, sum) 
-#   s[which(d == min(d))[1]]
-# }
 
 
 representativeSeq <- function(s, percentReads = 95){
@@ -334,11 +321,6 @@ golayCorrection <- function(x){
 }
 
 
-
-
-
-
-
 collateSampleReads <- function(label){
   v <- tibble(file = list.files(file.path(config$outputDir, 'tmp'), pattern = paste0('\\.', label, '\\.')),
               sample = unlist(lapply(strsplit(file, paste0('\\.', label, '\\.')), '[[', 1)))
@@ -386,9 +368,6 @@ parseBLAToutput <- function(f){
   b$tStarts              <- as.character(b$tStarts)
   b
 }
-
-
-
 
 
 
@@ -556,13 +535,6 @@ createIntUCSCTrack <- function(d, abundCuts = c(5,10,50),
   write.table(d[, c('seqnames', 'position', 'position', siteLabel, 'score', 'strand', 'start', 'end', 'color')], 
               sep = '\t', col.names = FALSE, row.names = FALSE, file = outputFile, append = TRUE, quote = FALSE)
 }
-
-
-
-
-
-
-
 
 
 createFragUCSCTrack <- function(d, readCuts = c(5,10,50), 

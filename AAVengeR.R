@@ -457,6 +457,7 @@ logMsg(config, 'RefGenome alignments completed.', config$logFile)
 
 save(list = ls(all=TRUE), file = file.path(config$outputDir, 'savePoint2.RData'))
 
+# JKE chr16+14665948
 
 # Apply generic alignment filters.
 alignments <- 
@@ -592,6 +593,8 @@ frags <- bind_rows(dplyr::group_by(frags, uniqueSample, seqnames, start, end, st
                    dplyr::mutate(posid = paste0(seqnames, strand, ifelse(strand == '+', start, end))))
 
 
+# save.image(file = 'dev.img')
+
 # Save the fragments for downstream analyses.
 saveRDS(frags, file = file.path(config$outputDir, 'readFrags.rds'))
 
@@ -684,7 +687,7 @@ if(config$virusReads.captureLTRseqs){
                   frag$maxReadPercentDiff2 <- frag$maxReadPercentDiff 
                   frag$ltrRepSeq2 <- frag$ltrRepSeq 
                 }else{
-                  r <- representativeSeq(paste0(ltrs$LTRseq, frag$additionalLTRnts))
+                  r <- representativeSeq(paste0(ltrs$LTRseq, additionalLTRnts))
                   frag$maxReadPercentDiff2 <- r[[1]]
                   frag$ltrRepSeq2 <- r[[2]]
                 }
