@@ -207,13 +207,28 @@ shortRead2DNAstringSet <- function(x){
 representativeSeq <- function(s, percentReads = 95){
   if(length(s) == 1 | n_distinct(s) == 1) return(list(0, s[1]))
   
+  if(length(s) > config$fragmentProcessing.LTRrep.maxReads){
+    set.seed(1)
+    s <- sample(s, config$fragmentProcessing.LTRrep.maxReads)
+  }
+  
+  f <- tmpFile()
+  
   # Align sequences in order to handle potential indels.
-  inputFile <- file.path(config$outputDir, 'tmp', paste0(tmpFile(), '.fasta'))
+  inputFile <- file.path(config$outputDir, 'tmp', paste0(f, '.fasta'))
   s <- Biostrings::DNAStringSet(s)
   names(s) <- paste0('s', 1:length(s))
   Biostrings::writeXStringSet(s, file = inputFile)
-  outputFile <- file.path(config$outputDir, 'tmp', paste0(tmpFile(), '.mafft'))
-  system(paste(config$command.mafft, '--thread 1 --quiet', inputFile, '>', outputFile))
+  outputFile <- file.path(config$outputDir, 'tmp', paste0(f, '.aln'))
+  
+  system(paste(config$command.muscle, '-quiet -maxiters 1 -diags -in ', inputFile, ' -out ', outputFile))
+
+  if(! file.exists(outputFile)){
+    logMsg(config, paste0('Waiting for file: ', outputFile), logFile)
+    waitForFile(outputFile)
+    logMsg(config, 'File found.', logFile)
+  }
+  
   s <- as.character(ShortRead::readFasta(outputFile)@sread)
   
   invisible(file.remove(c(inputFile, outputFile)))

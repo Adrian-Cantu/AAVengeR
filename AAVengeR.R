@@ -23,6 +23,8 @@ config <- read_yaml('/home/everett/projects/AAVengeR_runs/configs/config.wistar.
 #config <- read_yaml('/home/everett/SparkAAV/AAVengeR/configs/config.vector.yml')
 source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
 
+config$startTime <- ymd_hms(format(Sys.time(), "%y-%m-%d %H:%M:%S"))
+
 
 
 # Prepare run session.
@@ -31,7 +33,6 @@ dir.create(config$outputDir)
 invisible(sapply(c('tmp', 'readIDs', 'readsRemoved', 'seqChunks', 'sampleReads', 'logs', 'fragReads'), 
                  function(x) dir.create(file.path(config$outputDir, x))))
 write(capture.output(sessionInfo()), file = file.path(config$outputDir, 'sessionInfo.txt'))
-config$startTime <- ymd_hms(format(Sys.time(), "%y-%m-%d %H:%M:%S"))
 config$logFile <- file.path(config$outputDir, 'logs', 'log')
 write(date(), file = config$logFile)
 
@@ -688,8 +689,8 @@ frags <- arrange(frags, desc(reads))
 frags$s <- rep(1:config$demultiplexing.CPUs, ceiling(nrow(frags)/config$demultiplexing.CPUs))[1:nrow(frags)]
 
   
-#frags <- bind_rows(parLapply(cluster, split(frags, frags$s), function(a){
-frags <- bind_rows(lapply(split(frags, frags$s), function(a){  
+frags <- bind_rows(parLapply(cluster, split(frags, frags$s), function(a){
+#frags <- bind_rows(lapply(split(frags, frags$s), function(a){  
               library(dplyr)
               source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
     
@@ -713,11 +714,6 @@ frags <- bind_rows(lapply(split(frags, frags$s), function(a){
                 # returned representative divided by the number of letters in the representative sequence.
          
                 r <- representativeSeq(ltrs$LTRseq)
-            
-                logMsg(config, paste0('Processing fragment ', x, '/', nrow(a), ' with ', frag$reads, ' reads -- done.'), logFile)
-                
-                
-                browser()
                 
                 frag$maxReadPercentDiff <- r[[1]]
                 frag$ltrRepSeq <- r[[2]]
@@ -732,7 +728,7 @@ frags <- bind_rows(lapply(split(frags, frags$s), function(a){
                   frag$maxReadPercentDiff2 <- frag$maxReadPercentDiff 
                   frag$ltrRepSeq2 <- frag$ltrRepSeq 
                 }else{
-                  
+                  logMsg(config, paste0('Reprocessing fragment with additional NTs', x, '/', nrow(a), ' with ', frag$reads, ' reads.'), logFile)
                   r <- representativeSeq(paste0(ltrs$LTRseq, additionalLTRnts))
                   frag$maxReadPercentDiff2 <- r[[1]]
                   frag$ltrRepSeq2 <- r[[2]]
