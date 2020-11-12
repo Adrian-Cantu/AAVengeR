@@ -206,24 +206,45 @@ shortRead2DNAstringSet <- function(x){
 
 representativeSeq <- function(s, percentReads = 95){
   if(length(s) == 1 | n_distinct(s) == 1) return(list(0, s[1]))
-  m <- as.matrix(stringdist::stringdistmatrix(s))
   
-  # With percentReads = 95, dissimilar reads will not be removed unless more than 20 reads are provided.
+  # Align sequences in order to handle potential indels.
+  inputFile <- file.path(config$outputDir, 'tmp', paste0(tmpFile(), '.fasta'))
+  s <- Biostrings::DNAStringSet(s)
+  names(s) <- paste0('s', 1:length(s))
+  Biostrings::writeXStringSet(s, file = inputFile)
+  outputFile <- file.path(config$outputDir, 'tmp', paste0(tmpFile(), '.mafft'))
+  system(paste(config$command.mafft, '--thread 1 --quiet', inputFile, '>', outputFile))
+  s <- as.character(ShortRead::readFasta(outputFile)@sread)
+  
+  invisible(file.remove(c(inputFile, outputFile)))
+  
+  # Create an all vs. all edit distnace matrix.
+  m <- as.matrix(stringdist::stringdistmatrix(s))
+ 
+  # Create a data frame of string indcies and the sum of their edit distances to all other strings
+  # and then order this data frame such that the strings with the small edit distnaces to other
+  # strings are at the top of the data frame. 
   maxDiffPerNT <- data.frame(n = 1:length(s), diffs = apply(m, 1, sum)) %>% dplyr::arrange(diffs)
+  
+  # The function returns both the representative sequence (sequence with the lowest edit distnaces to others)
+  # and a metric max edit distance of any string / num characters in the selected representaive.
+  #
+  #  123456789012345
+  #  AGTCAGCTAGCTAGC  max edit distance to other LTRs: 3,  metric 3/15 = 0.2
+  
+  # Remove 5% of the most dissimilar reads becasue we do not want an odd-ball read or two 
+  # to skew the returned metric.
+  # With percentReads = 95, dissimilar reads will not be removed unless more than 20 reads are provided.
   rows <- maxDiffPerNT[1:ceiling(length(s) * (percentReads/100)),]$n
   m <- m[rows, rows]
   s <- s[rows]
-  
+
   d <- apply(m, 1, sum) 
-  list(max(apply(m, 1, max) / nchar(s)), s[which(d == min(d))[1]])
+  list(max(apply(m, 1, max) / nchar(s)), gsub('-', '', s[which(d == min(d))[1]]))
 }
 
 
-
-
 captureLTRseqs <- function(reads, seqs, rowNum){
-  
-  ### if(rowNum == 8) browser()
   
   d <- group_by(tibble(ids = names(reads), 
                        read = as.character(reads)), read) %>%
@@ -289,6 +310,57 @@ captureLTRseqs <- function(reads, seqs, rowNum){
  names(b) <- c('id', 'LTRname', 'LTRseq')
  
  return(list(reads = reads, LTRs = b))
+}
+
+captureLTRseqsLentiHMM <- function(reads, hmm, rowNum){
+  
+  # The passed HMM is expected to cover at least 100 NT of the end of the LTR
+  # being sequences out of and the HMM is expected to end in CA.
+  
+  outputFile <- file.path(config$outputDir, 'tmp', tmpFile())
+  writeXStringSet(reads, outputFile)
+  comm <- paste0(config$command.hmmsearch, ' --tblout ', outputFile, '.tbl --domtblout ', outputFile, '.domTbl ', 
+                hmm, ' ', outputFile, ' > ', outputFile, '.hmmsearch')
+  system(comm)
+  
+  r <- readLines(paste0(outputFile, '.domTbl'))
+  r <- r[!grepl('^\\s*#', r)]
+  r <- strsplit(r, '\\s+')
+  
+  o <- bind_rows(lapply(r, function(x) data.frame(t(x))))
+  
+  names(o) <- c('targetName', 'targetAcc', 'tlen', 'queryName', 'queryAcc', 'queryLength', 'fullEval', 
+                'fullScore', 'fullBias', 'domNum', 'totalDoms', 'dom_c-Eval', 'dom_i-Eval', 'domScore', 
+                'domBias', 'hmmStart', 'hmmEnd', 'targetStart', 'targetEnd', 'envStart', 'envEnd', 
+                'meanPostProb',  'desc') 
+  write.table(o, sep = '\t', file = paste0(outputFile, '.domTbl2'), col.names = TRUE, row.names = FALSE, quote = FALSE)
+  
+  o <- readr::read_delim(paste0(outputFile, '.domTbl2'), '\t', col_types = readr::cols())
+  
+  h <- readLines(hmm)
+  hmmLength <- as.integer(unlist(strsplit(h[grepl('^LENG', h)], '\\s+'))[2])
+  hmmName <- unlist(strsplit(h[grepl('^NAME', h)], '\\s+'))[2]
+  
+  # Subset HMM results such that alignments start at the start of reads, the end of the HMM
+  # which contains the CA is includes and the alignment has a significant alignment scores.
+  o <- subset(o, targetStart <= 3 & hmmEnd == hmmLength & fullEval <= 1e-5)
+  if(nrow(o) == o) return(list())
+  
+  reads2 <- reads[names(reads) %in% o$targetName]
+  rm(reads)
+  gc()
+  reads2 <- reads2[match(o$targetName, names(reads2))]
+  
+  # Make sure all HMMs alignments result in an CA in the target sequences.
+  reads2 <- reads2[as.character(subseq(reads2, o$targetEnd-1, o$targetEnd)) == 'CA']
+  if(length(reads2) == 0) return(list())
+  
+  r <- list()
+  r[['reads']] <- reads2
+  r[['LTRs']]  <- tibble(id = names(reads2),
+                         LTRname = hmmName,
+                         LTRseq = as.character(subseq(reads2, 1, o$targetEnd)))
+  r
 }
 
 

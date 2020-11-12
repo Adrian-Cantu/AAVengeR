@@ -1,5 +1,6 @@
 library(yaml)
 library(igraph)
+library(msa)
 library(stringdist)
 library(ShortRead)
 library(tidyverse)
@@ -9,19 +10,18 @@ library(gintools)
 library(lubridate)
 options(stringsAsFactors = FALSE)
 
-
 # Read the config file.
 # This file contains processing parameters and also points to the sample configuration file
 # which contains sample specific parameters.
-configFile <- commandArgs(trailingOnly = TRUE)
-if(! file.exists(configFile)) stop('Error -- configuration file not found.')
-config  <- read_yaml(configFile)
-source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
+#configFile <- commandArgs(trailingOnly = TRUE)
+#if(! file.exists(configFile)) stop('Error -- configuration file not found.')
+#config  <- read_yaml(configFile)
+#source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
 
-
+config <- read_yaml('/home/everett/projects/AAVengeR_runs/configs/config.wistar.yml')
 #config <- read_yaml('/home/everett/projects/AAVengeR_runs/configs/config.Sabatino.yml')
 #config <- read_yaml('/home/everett/SparkAAV/AAVengeR/configs/config.vector.yml')
-#source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
+source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
 
 
 
@@ -35,6 +35,20 @@ config$startTime <- ymd_hms(format(Sys.time(), "%y-%m-%d %H:%M:%S"))
 config$logFile <- file.path(config$outputDir, 'logs', 'log')
 write(date(), file = config$logFile)
 
+# Max edit distance between ITR/LTR representative and all others for a fragment / length of representative 
+if(! 'LTR_remnant_maxDifference' %in% names(config)) config$LTR_remnant_maxDifference <- 0.15
+
+# Fragment ITR/LTR assembly conflict resolution.
+# When fragments are assembled into sites, their representative ITR/LTR sequences are compared 
+# similiar to how fragment reads are compared when building fragments. This is important because 
+# two or more closely spaced events may be combined during fragment boundary standardization. 
+# When a the ITR/LTR representative sequences of assembled fragments are not similar enough 
+# we try to salvage the site by retaining the fragments which are similiar to one another and 
+# discarding the disimiliar fragments. This parameter defines the min. threshold percentange of fragments 
+# with similiar ITR/LTR sequences to allow a site to progress. Future versions of the software may 
+# consider spliting the site.
+if(! 'FragmentAssemblyConflictResolution' %in% names(config)) config$FragmentAssemblyConflictResolution <- 2/3
+if(config$FragmentAssemblyConflictResolution < 0.5) stop('FragmentAssemblyConflictResolution parmater must be > 0.5')
 
 
 
@@ -42,6 +56,10 @@ write(date(), file = config$logFile)
 samples <- read_delim(config$sampleConfigFile, delim  = ',', col_names = TRUE, col_types = cols())
 checkConfigFilePaths(samples$refGenomeBLATdb)
 if(config$indexReads.rc) samples$index1Seq <- as.character(reverseComplement(DNAStringSet(samples$index1Seq)))
+if('filter.removeVectorReadPairs' %in% names(config) &  config$filter.removeVectorReadPairs == TRUE & !'vectorSeqFile' %in% names(samples)){
+  stop('A vectorSeqFile column must be defined in your sample config file if filter.removeVectorReadPairs is defined in you config file.')
+}
+
 if('vectorSeqFile' %in% names(samples)) checkConfigFilePaths(samples$vectorSeqFile)
 if(! 'subject' %in% names(samples))   samples$subject <- 'subject'
 if(! 'replicate' %in% names(samples)) samples$replicate <- 1
@@ -131,7 +149,6 @@ config$startTime <- ymd_hms(format(Sys.time(), "%y-%m-%d %H:%M:%S"))
 
 invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks'), full.names = TRUE), function(f){
 #invisible(lapply(list.files(file.path(config$outputDir, 'seqChunks'), full.names = TRUE), function(f){
-#invisible(lapply("/home/everett/projects/AAVengeR_runs/outputs/Sabatino/seqChunks/1.RData", function(f){
   library(ShortRead)
   library(tidyverse)
   source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
@@ -142,7 +159,7 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
   chunk.n <- unlist(str_match_all(f, '(\\d+)$'))[2]
   logFile <-  file.path(config$outputDir, 'logs', paste0('seqChunk_', chunk.n, '.log'))
   
-  # Loop through samples in sample data file.
+  # Loop through samples in sample data file to demultiplex and apply read specific filters.
   invisible(lapply(1:nrow(samples), function(r){
     rowNum <- r
     r <- samples[r,]
@@ -171,11 +188,8 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
     }
     
     # Create barcode demultiplexing vectors.
-    v1 <- rep(TRUE, length(virusReads))
-    if('index1Reads.maxMismatch' %in% names(config)){
-      v1 <- vcountPattern(r$index1Seq, index1Reads, max.mismatch = config$index1Reads.maxMismatch) > 0
-      logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', sum(v1), ' reads pass barcode filter.'), logFile)
-    }
+    v1 <- vcountPattern(r$index1Seq, index1Reads, max.mismatch = config$index1Reads.maxMismatch) > 0
+    logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', sum(v1), ' reads pass barcode filter.'), logFile)
     
     
     # Create break read linker barcode demultiplexing vector.
@@ -289,8 +303,14 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
   
     
     # Trim leading adapter sequences.
-    if(config$virusReads.captureLTRseqs){
-      o <- captureLTRseqs(virusReads, r$virusLTRseq, rowNum)
+    if(config$virusReads.captureLTRseq.method == 'blastProvidedTemplates'){
+       o <- captureLTRseqs(virusReads, r$virusLTRseq, rowNum)
+    } else if(config$virusReads.captureLTRseq.method == 'lentiViralHMM'){  
+      o <- captureLTRseqsLentiHMM(virusReads, r$virusLTRseq, rowNum)
+      
+    } else{
+      stop('Error - No LTR capture method provided.')
+    }
       
       if(length(o) == 0){
         logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') No reads returned from LTR/ITR capture.'), logFile)
@@ -318,12 +338,7 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
          logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') No reads remaining after LTR capture and trimming.'), logFile)
          return()
        }
-    } else {
-      # This route does not support multiple LTR sequences -- add check.
-      s <- unlist(strsplit(r$virusLTRseq, ','))[2]
-      logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') Trimming leading seq: ', s), logFile)
-      virusReads <- trimLeadingSeq(virusReads, s)
-    }
+  
     
     
     # Capture random ids.
@@ -458,6 +473,8 @@ logMsg(config, 'RefGenome alignments completed.', config$logFile)
 save(list = ls(all=TRUE), file = file.path(config$outputDir, 'savePoint2.RData'))
 
 # JKE chr16+14665948
+# /home/kevin/projects/wistar/Wistar20201004/output_data/condensed_sites.Wistar20201004.csv
+
 
 # Apply generic alignment filters.
 alignments <- 
@@ -486,10 +503,10 @@ virusReads.aln <- filter(virusReads.aln, (qSize - qEnd) <= 3, matches >= config$
 
 # If we are not capturing LTR sequences then a static LTR was removed from viral reads
 # and we can apply a filter to the beginning of the trimmed read.
-if(! config$virusReads.captureLTRseqs){
-  logMsg(config, 'Requiring virus reads to begin alignments near their start because the ITR/LTR should of been fully trimmed off.', config$logFile)
-  virusReads.aln <- filter(virusReads.aln, qStart <= 3)
-}
+# if(! config$virusReads.captureLTRseqs){
+#   logMsg(config, 'Requiring virus reads to begin alignments near their start because the ITR/LTR should of been fully trimmed off.', config$logFile)
+#   virusReads.aln <- filter(virusReads.aln, qStart <= 3)
+# }
 
 
 alignments <- bind_rows(virusReads.aln, breakReads.aln)
@@ -518,18 +535,20 @@ rm(alignments)
 logMsg(config, 'Starting to create fragments from alignment data.', config$logFile)
 
 ### readPerChunk <- 20000
-cluster <- makeCluster(3)
-clusterExport(cluster, c('config', 'b'))
-
-v$s <- ntile(1:nrow(v), 3)
 
 
 # Here we build a table of potential fragments by matching up virus and break point reads
 # and filtering with basic sanity checks. This is done via a left join of the break reads 
-# to the virus reads followed by filtering. This join is split between three groupings 
-# because of the potential to exceed R's internal table row limit during the joins.
+# to the virus reads followed by filtering. The virus reads are split into a number 
+# of chunks and the correponding break reads are joined. The reads broken into a couple 
+# of chunks because a single join may break R's internal able row number limit. We 
+# chose three here because too many chunks would require the copying of all the break
+# reads to multiple computaion cores.
 
-# capture qStart.virusReads
+cluster <- makeCluster(3)
+clusterExport(cluster, c('config', 'b'))
+
+v$s <- ntile(1:nrow(v), 3)
 
 frags <- bind_rows(parLapply(cluster, split(v, v$s), function(x){
          library(dplyr)
@@ -593,15 +612,6 @@ frags <- bind_rows(dplyr::group_by(frags, uniqueSample, seqnames, start, end, st
                    dplyr::mutate(posid = paste0(seqnames, strand, ifelse(strand == '+', start, end))))
 
 
-# save.image(file = 'dev.img')
-
-# Save the fragments for downstream analyses.
-saveRDS(frags, file = file.path(config$outputDir, 'readFrags.rds'))
-
-frags$s <- paste0(frags$subject, '_', frags$sample, '_', frags$reads)
-createFragUCSCTrack(frags, title = 'AAVengeR_fragments', outputFile = file.path(config$outputDir, 'fragments.ucsc'), label = 's')
-
-
 posIDclusterTable <- 
   dplyr::group_by(unnest(frags, readID.list), subject, readID.list) %>%
   dplyr::summarise(nPositions = n_distinct(posid), posids = list(posid)) %>%
@@ -609,11 +619,11 @@ posIDclusterTable <-
   dplyr::filter(nPositions > 1) 
 
 # posIDclusterTable -- for each read, provide the multiple posids to which it maps.
-# subject readID.list                                   nPositions posids    
-# <chr>   <chr>                                              <int> <list>    
-#   1 pH19    M03249:365:000000000-C3CH4:1:1101:11087:17666          2 <chr [2]> 
-#   2 pH19    M03249:365:000000000-C3CH4:1:1101:11121:16397         13 <chr [13]>
-#   3 pH19    M03249:365:000000000-C3CH4:1:1101:11589:17142         13 <chr [13]>
+#
+# subject     readID.list                                       nPositions   posids (list of posids)    
+#   1 pH19    M03249:365:000000000-C3CH4:1:1101:11087:17666          2      <chr [2]> 
+#   2 pH19    M03249:365:000000000-C3CH4:1:1101:11121:16397         13      <chr [13]>
+#   3 pH19    M03249:365:000000000-C3CH4:1:1101:11589:17142         13      <chr [13]>
 
 posIDclusters <- do.call(rbind, lapply(split(posIDclusterTable, posIDclusterTable$subject), function(s){
                    nodes <- unique(unlist(s$posids))
@@ -625,14 +635,15 @@ posIDclusters <- do.call(rbind, lapply(split(posIDclusterTable, posIDclusterTabl
                    data.frame(subject = s$subject[1], clusters = I(list(lapply(decompose(network), function(x) V(x)$name))))
                  }))
 
-# posIDclusters
+# Structure of posIDclusters
 # subject     clusters
 # <chr>     <list of posids clusters>
-# pH19 c("chr11....
-# pHO2 c("chr20....
-# pJ60 c("chr2+....
-
+# pH19      c("chr11....
+# pHO2      c("chr20....
+# pJ60      c("chr2+....
+#
 # Clusters for pH19 (first row from posIDclusters)
+#
 # > posIDclusters[1,]$clusters[[1]]
 # [[1]]
 # [1] "chr11-8358680"  "chr11+10996378"
@@ -659,34 +670,69 @@ save(list = ls(all=TRUE), file = file.path(config$outputDir, 'savePoint3.RData')
 
 
 
-if(config$virusReads.captureLTRseqs){
+# Examine the LTR/ITR sequence remnants of each read from each fragment and determine how similiar they 
+# are to one another. For each fragment, the most similiar 95% of the reads are considered and representative 
+# remnant sequences are determined.
+
+# ltrRepSeq is the representative ITR/LTR sequence for a fragment based on examination of its reads.
+# ltrRepSeq2 is the  representative ITR/LTR sequence with addition NTs found between the recognizable 
+#   ITR/LTR sequence and the start of the alignment to the genome..
+
+cluster <- makeCluster(config$demultiplexing.CPUs)
+clusterExport(cluster, c('config'))
+
+#frags$s <- ntile(1:nrow(frags), config$demultiplexing.CPUs)
+
+# Distribute such that frags with several reads are equally spread across groups
+frags <- arrange(frags, desc(reads))
+frags$s <- rep(1:config$demultiplexing.CPUs, ceiling(nrow(frags)/config$demultiplexing.CPUs))[1:nrow(frags)]
+
   
-  # Examine the LTR/ITR sequence remnants (for each read) from each fragment and determine how similiar they are to one another.
-  # For each fragment, the most similiar 95% of the reads are considered and representative remnant sequences are determined.
-  cluster <- makeCluster(config$demultiplexing.CPUs)
-  clusterExport(cluster, c('config'))
-  frags$s <- ntile(1:nrow(frags), config$demultiplexing.CPUs)
-  
-  frags <- bind_rows(parLapply(cluster, split(frags, frags$s), function(a){
+#frags <- bind_rows(parLapply(cluster, split(frags, frags$s), function(a){
+frags <- bind_rows(lapply(split(frags, frags$s), function(a){  
               library(dplyr)
               source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
     
+              logFile <-  file.path(config$outputDir, 'logs', paste0('LTRrep_', a$s[1], '.log'))
+             
+              # Assemble LTR.table here within the parLapply loop because it is more efficient to
+              # assemble it here rather than passing a copy to each computation node.
               LTR.table <- bind_rows(lapply(list.files(file.path(config$outputDir, 'tmp'), pattern = 'LTRseqs', full.names = TRUE), readRDS))
     
+              # Examine each fragment individualy and assess the captured ITRs/LTRs defined in LTR.table.
               bind_rows(lapply(1:nrow(a), function(x){
                 frag <- a[x,]
+                
+                logMsg(config, paste0('Processing fragment ', x, '/', nrow(a), ' with ', frag$reads, ' reads.'), logFile)
+               
+                # Retrieve LTR sequences for the reads that define this fragment.
                 ltrs <- LTR.table[match(unlist(frag$readID.list), LTR.table$id),]
-  
+                
+                # Identify the most common ITR/LTR sequece in the reads supporting this fragment.
+                # The returned maxReadPercentDiff metric is the max edit distance between the 
+                # returned representative divided by the number of letters in the representative sequence.
+         
                 r <- representativeSeq(ltrs$LTRseq)
+            
+                logMsg(config, paste0('Processing fragment ', x, '/', nrow(a), ' with ', frag$reads, ' reads -- done.'), logFile)
+                
+                
+                browser()
+                
                 frag$maxReadPercentDiff <- r[[1]]
                 frag$ltrRepSeq <- r[[2]]
                 
+                # If the virus read alignments do not start on 1 then there are additional NTs 
+                # between the recognized LTR and the following genomic juncture. This may be 
+                # the result of alignment error or genuine extensions of the ITR/LTR.
+                # substr(string, 1, 0) with return an empty string.
                 additionalLTRnts <- substr(ltrs$readSeq, 1, frag$virusReadAlignmentStart)
                 
                 if(all(nchar(additionalLTRnts) == 0)){
                   frag$maxReadPercentDiff2 <- frag$maxReadPercentDiff 
                   frag$ltrRepSeq2 <- frag$ltrRepSeq 
                 }else{
+                  
                   r <- representativeSeq(paste0(ltrs$LTRseq, additionalLTRnts))
                   frag$maxReadPercentDiff2 <- r[[1]]
                   frag$ltrRepSeq2 <- r[[2]]
@@ -694,27 +740,37 @@ if(config$virusReads.captureLTRseqs){
                 
                 frag
               }))
-           }))
+        }))
   
-  stopCluster(cluster)
-  
-  
-  # Remove fragments where there is not a clear concensus remnant. 
-  config$LTR_remnant_maxDifference <- 0.15
-  frags <- subset(frags, frags$maxReadPercentDiff2 <= config$LTR_remnant_maxDifference)
+stopCluster(cluster)
   
   
-  # Collapse fragments to individual sites. 
-  sites <- bind_rows(lapply(split(frags, paste(frags$subject, frags$sample, frags$posid, frags$posIDcluster)), function(x){
+# Remove fragments where there is not a clear concensus remnant. 
+frags <- subset(frags, frags$maxReadPercentDiff2 <= config$LTR_remnant_maxDifference)
+  
 
+# Save the fragments for downstream analyses.
+saveRDS(frags, file = file.path(config$outputDir, 'readFrags.rds'))
+
+frags$s <- paste0(frags$subject, '_', frags$sample, '_', frags$reads)
+createFragUCSCTrack(frags, title = 'AAVengeR_fragments', outputFile = file.path(config$outputDir, 'fragments.ucsc'), label = 's')
+
+
+# Collapse fragments to individual sites. 
+# Fragment ITR/LTR sequences will be evaulated so that fragments with dissimiliar ITR/LTR 
+# sequences will not be combined.
+
+sites <- bind_rows(lapply(split(frags, paste(frags$subject, frags$sample, frags$posid, frags$posIDcluster)), function(x){
     if(nrow(x) > 1){
       i <- rep(TRUE, nrow(x))
       r2 <- representativeSeq(x$ltrRepSeq2)
       
-      if(r2[[1]] > 0.15){
-        # There is a conflict, one or more fragments have a markedly different LTR sequence.
-        i <- as.vector(stringdist::stringdistmatrix(x$ltrRepSeq2, r2[[2]]) / nchar(x$ltrRepSeq2) < 0.15)
-        if(sum(i)/nrow(x) >= 2/3){
+      if(r2[[1]] > config$LTR_remnant_maxDifference){
+        # There is a conflict, one or more fragments have a markedly different LTR sequence representative then the other fragments.
+        # Attempt to salvage this site by retaining the majority of fragments with similiar ITR/LTR sequences.
+        
+        i <- as.vector(stringdist::stringdistmatrix(x$ltrRepSeq2, r2[[2]]) / nchar(x$ltrRepSeq2) < config$LTR_remnant_maxDifference)
+        if(sum(i)/nrow(x) >= config$FragmentAssemblyConflictResolution){
           x <- x[i,]
         } else {
           return(tibble())
@@ -733,15 +789,17 @@ if(config$virusReads.captureLTRseqs){
              dplyr::mutate(estAbund = n(), position = ifelse(strand[1] == '+', start[1], end[1]), fragmentsRemoved = 0) %>%
              dplyr::select(subject, sample, replicate, uniqueSample, seqnames, strand, position, posid, posIDcluster, estAbund, reads, readID.list, fragmentsRemoved, ltrRepSeq, ltrRepSeq2))
     }
-  }))
-} else {
-  
-  # ...
-  
-}
+}))
+
   
 
 # Collapse multihits.
+# Multihit sites are represented by being associated with pseudo chromosome chrUn and strand *.
+# Multihit posids have the form of chrUn*x(y) where x is the numeric cluster id and y are the
+# number of posids in the cluster. Estimated abundance value of a multi hit is the maximum estimated 
+# abundance of any site within the cluster and the reads count is the sum of all reads of all sites 
+# within a cluster.
+
 if(any(is.numeric(sites$posIDcluster))){
   a <- subset(sites, is.na(posIDcluster))
   b <- group_by(subset(sites, ! is.na(posIDcluster)), posIDcluster) %>%
@@ -760,10 +818,10 @@ sites$posIDcluster <- NULL
 
 save(sites, file = file.path(config$outputDir, 'sites.RData'))
 
-d <- dplyr::mutate(sites, subject = sub('^p', '', subject), start = position, end = position, siteLabel = paste0(subject, '_', sample, '_', estAbund)) %>%
+d <- dplyr::mutate(sites, start = position, end = position, siteLabel = paste0(subject, '_', sample, '_', estAbund)) %>%
      dplyr::filter(seqnames != 'chrUn')
 createIntUCSCTrack(d, siteLabel = 'siteLabel', outputFile = file.path(config$outputDir, 'sites.ucsc'))
-system(paste0('cat ', file.path(config$outputDir, 'sites.ucsc'), ' ', file.path(config$outputDir, 'fragments.ucsc'), ' > ',file.path(config$outputDir, 'AAVengeR.ucsc')))
 
+system(paste0('cat ', file.path(config$outputDir, 'sites.ucsc'), ' ', file.path(config$outputDir, 'fragments.ucsc'), ' > ',file.path(config$outputDir, 'AAVengeR.ucsc')))
 
 logMsg(config, 'done.', config$logFile)
