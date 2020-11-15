@@ -219,7 +219,7 @@ representativeSeq <- function(s, percentReads = 95){
   s <- Biostrings::DNAStringSet(s)
   names(s) <- paste0('s', 1:length(s))
   Biostrings::writeXStringSet(s, file = inputFile)
-  outputFile <- file.path(config$outputDir, 'tmp', paste0(f, '.aln'))
+  outputFile <- file.path(config$outputDir, 'tmp', paste0(f, '.representativeSeq.muscle'))
   
   system(paste(config$command.muscle, '-quiet -maxiters 1 -diags -in ', inputFile, ' -out ', outputFile))
 
@@ -259,7 +259,7 @@ representativeSeq <- function(s, percentReads = 95){
 }
 
 
-captureLTRseqs <- function(reads, seqs, rowNum){
+captureLTRseqs <- function(reads, seqs){
   
   d <- group_by(tibble(ids = names(reads), 
                        read = as.character(reads)), read) %>%
@@ -327,7 +327,7 @@ captureLTRseqs <- function(reads, seqs, rowNum){
  return(list(reads = reads, LTRs = b))
 }
 
-captureLTRseqsLentiHMM <- function(reads, hmm, rowNum){
+captureLTRseqsLentiHMM <- function(reads, hmm){
   
   # The passed HMM is expected to cover at least 100 NT of the end of the LTR
   # being sequences out of and the HMM is expected to end in CA.
@@ -344,6 +344,8 @@ captureLTRseqsLentiHMM <- function(reads, hmm, rowNum){
   
   o <- bind_rows(lapply(r, function(x) data.frame(t(x))))
   
+  if(nrow(o) == 0) return(list())
+  
   names(o) <- c('targetName', 'targetAcc', 'tlen', 'queryName', 'queryAcc', 'queryLength', 'fullEval', 
                 'fullScore', 'fullBias', 'domNum', 'totalDoms', 'dom_c-Eval', 'dom_i-Eval', 'domScore', 
                 'domBias', 'hmmStart', 'hmmEnd', 'targetStart', 'targetEnd', 'envStart', 'envEnd', 
@@ -358,8 +360,8 @@ captureLTRseqsLentiHMM <- function(reads, hmm, rowNum){
   
   # Subset HMM results such that alignments start at the start of reads, the end of the HMM
   # which contains the CA is includes and the alignment has a significant alignment scores.
-  o <- subset(o, targetStart <= 3 & hmmEnd == hmmLength & fullEval <= 1e-5)
-  if(nrow(o) == o) return(list())
+  o <- subset(o, targetStart <= config$virusReads.captureLTRseqs.HMMmaxStartPos & hmmEnd == hmmLength & fullEval <= config$virusReads.captureLTRseqs.HMMminEval)
+  if(nrow(o) == 0) return(list())
   
   reads2 <- reads[names(reads) %in% o$targetName]
   rm(reads)
@@ -376,6 +378,12 @@ captureLTRseqsLentiHMM <- function(reads, hmm, rowNum){
                          LTRname = hmmName,
                          LTRseq = as.character(subseq(reads2, 1, o$targetEnd)))
   r
+}
+
+
+captureStaticLTRseq <- function(){
+  
+  return()
 }
 
 
@@ -468,31 +476,82 @@ trimLeadingSeq <- function(x, seq){
                 file.path(config$outputDir, 'tmp', paste0(f, '.out'))),
          ignore.stderr = TRUE)
   
-  s <- readFasta(file.path(config$outputDir, 'tmp', paste0(f, '.out')))
-  x <- s@sread
-  names(x) <- as.character(s@id)
+  s <- Biostrings::readDNAStringSet(file.path(config$outputDir, 'tmp', paste0(f, '.out')))
   file.remove(file.path(config$outputDir, 'tmp', f))
   file.remove(file.path(config$outputDir, 'tmp', paste0(f, '.out')))
+  s
+}
+
+
+# Trim static over read sequences.
+trimOverReadSeq <- function(x, seq, logFile){
+  f <- tmpFile()
+  
+  logFile <- paste0(logFile, '.static.', seq)
+  writeFasta(x,  file = file.path(config$outputDir, 'tmp', 'cutadapt', f))
+  
+  system(paste0(config$command.cutadapt3, ' -f fasta  -e 0.15 -a ', seq, ' --overlap 2 ', 
+                '--info-file=', file.path(config$outputDir, 'logs', 'cutadapt', logFile), ' ',
+                file.path(config$outputDir, 'tmp', 'cutadapt', f), ' > ', 
+                file.path(config$outputDir, 'tmp', 'cutadapt', paste0(f, '.out'))),
+         ignore.stderr = TRUE)
+  
+  parseCutadaptLog(file.path(config$outputDir, 'logs', 'cutadapt', logFile))
+  
+  x <- Biostrings::readDNAStringSet(file.path(config$outputDir, 'tmp', 'cutadapt', paste0(f, '.out')))
+  file.remove(file.path(config$outputDir, 'tmp', 'cutadapt', f))
+  file.remove(file.path(config$outputDir, 'tmp', 'cutadapt', paste0(f, '.out')))
   x
 }
 
 
-trimOverReadSeq <- function(x, seq){
-  f <- tmpFile()
+# Trim dynamic over read sequences.
+trimOverReadSeq2 <- function(reads, o, logFile){
   
-  writeFasta(x,  file = file.path(config$outputDir, 'tmp', f))
+  if(! all(names(o$reads) == o$LTRs$id)) stop('Read/LTR object is out of order.')
   
-  system(paste0(config$command.cutadapt3, ' -f fasta  -e 0.15 -a ', seq, ' --overlap 2 ', 
-                file.path(config$outputDir, 'tmp', f), ' > ', 
-                file.path(config$outputDir, 'tmp', paste0(f, '.out'))),
-         ignore.stderr = TRUE)
+  # Create adapter sequences (RC of last 12 NT of LTRs) for cutadapt to remove.
+  o$LTRs$LTRseqAdapter <- Biostrings::DNAStringSet(substr(o$LTRs$LTRseq, nchar(o$LTRs$LTRseq)-12, nchar(o$LTRs$LTRseq)))
+  o$LTRs$LTRseqAdapter <- as.character(Biostrings::reverseComplement(o$LTRs$LTRseqAdapter))
   
-  s <- readFasta(file.path(config$outputDir, 'tmp', paste0(f, '.out')))
-  x <- s@sread
-  names(x) <- as.character(s@id)
-  file.remove(file.path(config$outputDir, 'tmp', f))
-  file.remove(file.path(config$outputDir, 'tmp', paste0(f, '.out')))
-  x
+  o$LTRs <- o$LTRs[match(names(reads), o$LTRs$id),]
+  if(! all(names(reads) == o$LTRs$id)) stop('ITR/LTR object sort error')
+  
+  mcols(reads) <- data.frame(adapter = o$LTRs$LTRseqAdapter)
+  
+  Reduce('append', lapply(split(reads, o$LTRs$LTRseqAdapter), function(x){
+         adapter <- as.character(mcols(x)$adapter)[1]
+         f <- tmpFile()
+         Biostrings::writeXStringSet(x, file = file.path(config$outputDir, 'tmp', 'cutadapt', f))
+         cutadptLogFile <- file.path(config$outputDir, 'logs', 'cutadapt', paste0(logFile, '.dynamic.', adapter))
+    
+         system(paste0(config$command.cutadapt3, ' -f fasta -e 0.30 -a ', adapter, ' --overlap 2 ', 
+                       '--info-file=', cutadptLogFile, ' ',
+                       file.path(config$outputDir, 'tmp', 'cutadapt', f), ' > ', 
+                       file.path(config$outputDir, 'tmp', 'cutadapt', paste0(f, '.out'))),
+                       ignore.stderr = TRUE)
+    
+         parseCutadaptLog(cutadptLogFile)
+    
+         s <- Biostrings::readDNAStringSet(file.path(config$outputDir, 'tmp', 'cutadapt', paste0(f, '.out')))
+         invisible(file.remove(file.path(config$outputDir, 'tmp', 'cutadapt', f)))
+         invisible(file.remove(file.path(config$outputDir, 'tmp', 'cutadapt', paste0(f, '.out'))))
+         s
+      }))
+}
+
+parseCutadaptLog <- function(f){
+  l <- readLines(f)
+  l <- l[grepl('\\t0\\t', l)]
+  invisible(file.remove(f))
+  
+  if(length(l) > 0){
+    tbl <- read.table(text = l, sep = '\t')
+    tbl <- tbl[rev(order(nchar(as.character(tbl$V6)))),c(1, 6, 7)]
+    write.table(tbl, sep = '\t', file = f, col.names = FALSE, row.names = FALSE, quote = FALSE)
+  } else {
+    write('No result', file = f)
+  }
 }
 
 
