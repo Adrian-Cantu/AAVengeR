@@ -332,6 +332,10 @@ captureLTRseqsLentiHMM <- function(reads, hmm){
   # The passed HMM is expected to cover at least 100 NT of the end of the LTR
   # being sequences out of and the HMM is expected to end in CA.
   
+  #browser()
+  #if(any(c("M03249:101:000000000-JBCKB:1:1101:15828:15238", "M03249:101:000000000-JBCKB:1:1101:23522:16964",
+  #     "M03249:101:000000000-JBCKB:1:1101:20203:16560", "M03249:101:000000000-JBCKB:1:1101:16882:9527") %in% names(reads))) browser()
+  
   outputFile <- file.path(config$outputDir, 'tmp', tmpFile())
   writeXStringSet(reads, outputFile)
   comm <- paste0(config$command.hmmsearch, ' --tblout ', outputFile, '.tbl --domtblout ', outputFile, '.domTbl ', 
@@ -360,7 +364,9 @@ captureLTRseqsLentiHMM <- function(reads, hmm){
   
   # Subset HMM results such that alignments start at the start of reads, the end of the HMM
   # which contains the CA is includes and the alignment has a significant alignment scores.
-  o <- subset(o, targetStart <= config$virusReads.captureLTRseqs.HMMmaxStartPos & hmmEnd == hmmLength & fullEval <= config$virusReads.captureLTRseqs.HMMminEval)
+  o <- subset(o, targetStart <= config$virusReads.captureLTRseqs.HMMmaxStartPos & 
+                 hmmEnd == hmmLength & 
+                 fullEval <= as.numeric(config$virusReads.captureLTRseqs.HMMminEval))
   if(nrow(o) == 0) return(list())
   
   reads2 <- reads[names(reads) %in% o$targetName]

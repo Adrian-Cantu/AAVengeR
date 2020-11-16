@@ -147,7 +147,29 @@ config$startTime <- ymd_hms(format(Sys.time(), "%y-%m-%d %H:%M:%S"))
 if(! dir.exists(file.path(config$outputDir, 'logs', 'cutadapt'))) dir.create(file.path(config$outputDir, 'logs', 'cutadapt'))
 if(! dir.exists(file.path(config$outputDir, 'tmp', 'cutadapt'))) dir.create(file.path(config$outputDir, 'tmp', 'cutadapt'))
 
-u3_ids_toStudy <- readLines('/home/everett/projects/AAVengeR_runs/u3_ids_toStudy')
+
+#------
+# readTest <- c('M03249:101:000000000-JBCKB:1:1110:15651:11419', 'M03249:101:000000000-JBCKB:1:2101:11897:14602',
+#               'M03249:101:000000000-JBCKB:1:2110:28483:12487', 'M03249:101:000000000-JBCKB:1:1106:24289:24248',
+#               'M03249:101:000000000-JBCKB:1:1102:20269:11120', 'M03249:101:000000000-JBCKB:1:1102:4940:21639',
+#               'M03249:101:000000000-JBCKB:1:1105:20956:7160', 'M03249:101:000000000-JBCKB:1:1107:10394:13920',
+#               'M03249:101:000000000-JBCKB:1:2110:18642:7161', 'M03249:101:000000000-JBCKB:1:2106:17454:23220',
+#               'M03249:101:000000000-JBCKB:1:2107:17759:19272', 'M03249:101:000000000-JBCKB:1:1101:10900:18489',
+#               'M03249:101:000000000-JBCKB:1:1102:9660:11650', 'M03249:101:000000000-JBCKB:1:1102:13855:23112',
+#               'M03249:101:000000000-JBCKB:1:2111:23402:20193', 'M03249:101:000000000-JBCKB:1:1101:15828:15238',
+#               'M03249:101:000000000-JBCKB:1:1101:23522:16964', 'M03249:101:000000000-JBCKB:1:1102:19002:1087',
+#               'M03249:101:000000000-JBCKB:1:1101:6263:8951', 'M03249:101:000000000-JBCKB:1:1101:6243:10295',
+#               'M03249:101:000000000-JBCKB:1:1101:20203:16560', 'M03249:101:000000000-JBCKB:1:1102:7430:7701',
+#               'M03249:101:000000000-JBCKB:1:1106:22424:6042', 'M03249:101:000000000-JBCKB:1:1114:17255:10066',
+#               'M03249:101:000000000-JBCKB:1:2108:22795:3492', 'M03249:101:000000000-JBCKB:1:1101:16882:9527',
+#               'M03249:101:000000000-JBCKB:1:1103:23169:25008', 'M03249:101:000000000-JBCKB:1:2112:14338:1708') 
+# 
+# ids <- unlist(lapply(list.files(file.path(config$outputDir, 'seqChunks'), full.names = TRUE), function(f){
+#     load(f)
+#     names(breakReads)
+# }))
+#-----
+
 
 invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks'), full.names = TRUE), function(f){
 #invisible(lapply(list.files(file.path(config$outputDir, 'seqChunks'), full.names = TRUE), function(f){
@@ -163,10 +185,15 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
   
   #if('M03249:101:000000000-JBCKB:1:1101:16545:21790' %in% names(breakReads)) browser()
   # as.character(breakReads[names(breakReads) %in% 'M03249:101:000000000-JBCKB:1:1101:16545:21790'])
-  
+ 
+  #testIndexes <- unique(unname(as.character(index1Reads[names(index1Reads) %in% readTest]))) 
+   
   # Loop through samples in sample data file to demultiplex and apply read specific filters.
   invisible(lapply(1:nrow(samples), function(r){
     r <- samples[r,]
+    
+    #if(r$index1Seq %in% testIndexes) browser()
+    # readTest[readTest %in% names(virusReads)]
     
     # Create barcode demultiplexing vectors.
     v1 <- vcountPattern(r$index1Seq, index1Reads, max.mismatch = config$index1Reads.maxMismatch) > 0
@@ -374,6 +401,19 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
   logMsg(config, paste0('Read data chunk ', chunk.n, ' completed.'), file.path(config$outputDir, 'logs', 'log'))
 }))
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 stopCluster(cluster)
 
 
@@ -488,6 +528,8 @@ alignments <-
          qNumInsert  <= 1,
          tBaseInsert <= 2,
          qBaseInsert <= 2) 
+
+alignments$posid <- paste0(alignments$tName, alignments$strand, ifelse(alignments$strand == '+', alignments$tStart, alignments$tEnd))
 
 
 # Apply direction specific filters.
@@ -682,7 +724,7 @@ save(list = ls(all=TRUE), file = file.path(config$outputDir, 'savePoint3.RData')
 # ltrRepSeq2 is the  representative ITR/LTR sequence with addition NTs found between the recognizable 
 #   ITR/LTR sequence and the start of the alignment to the genome..
 
-config$demultiplexing.CPUs <- 10
+config$demultiplexing.CPUs <- 30
 cluster <- makeCluster(config$demultiplexing.CPUs)
 clusterExport(cluster, c('config'))
 
@@ -693,8 +735,8 @@ frags <- arrange(frags, desc(reads))
 frags$s <- rep(1:config$demultiplexing.CPUs, ceiling(nrow(frags)/config$demultiplexing.CPUs))[1:nrow(frags)]
 
 # JKE
-frags <- bind_rows(parLapply(cluster, split(frags, frags$s), function(a){
-#frags <- bind_rows(lapply(split(frags, frags$s), function(a){  
+#frags <- bind_rows(parLapply(cluster, split(frags, frags$s), function(a){
+frags <- bind_rows(lapply(split(frags, frags$s), function(a){  
               library(dplyr)
               source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
     
