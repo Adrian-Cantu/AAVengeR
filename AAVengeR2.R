@@ -449,10 +449,17 @@ if(config$filter.removeVectorReadPairs){
 
 # Organize read files by reference genome and read source (virusRead or breakRead).
 # This will allow samples to be aligned to different genomes defined in the samples table.
-d <- tibble(file = list.files(file.path(config$outputDir, 'sampleReads'), pattern = '\\.virusReads\\.|\\.breakReads\\.'),
+df <- tibble(file = list.files(file.path(config$outputDir, 'sampleReads'), pattern = '\\.virusReads\\.|\\.breakReads\\.'),
             uniqueSample = unlist(lapply(strsplit(file, '\\.'), function(x) paste0(x[1:(length(x) - 2)], collapse = '.'))),
             source = ifelse(grepl('virusRead', file), 'virusReads', 'breakReads')) %>%
      left_join(select(samples, uniqueSample, refGenomeBLATdb), by = 'uniqueSample')
+
+# file                                      uniqueSample             source      refGenomeBLATdb                                        
+# p100-2592~GTSP3806_u3~1.breakReads.fasta  p100-2592~GTSP3806_u3~1  breakReads  /home/everett/data/sequenceDatabases/BLAT/hg38/hg38.2bit
+# p100-2592~GTSP3806_u3~1.virusReads.fasta  p100-2592~GTSP3806_u3~1  virusReads  /home/everett/data/sequenceDatabases/BLAT/hg38/hg38.2bit
+# p100-2592~GTSP3806_u3~2.breakReads.fasta  p100-2592~GTSP3806_u3~2  breakReads  /home/everett/data/sequenceDatabases/BLAT/hg38/hg38.2bit
+# p100-2592~GTSP3806_u3~2.virusReads.fasta  p100-2592~GTSP3806_u3~2  virusReads  /home/everett/data/sequenceDatabases/BLAT/hg38/hg38.2bit
+
 
 
 
@@ -464,22 +471,22 @@ d <- tibble(file = list.files(file.path(config$outputDir, 'sampleReads'), patter
 
 logMsg(config, 'Starting refGenome alignments.', config$logFile)
 
-alignments <- bind_rows(lapply(split(d, paste(d$source, d$refGenomeBLATdb)), function(x){
-  f <- tmpFile()
+config$alignment.chunk.size <- 10000
+config$genomAlignment.CPUs  <- 10
+
+nSample <- 1
+nSamplesToAlign <- n_distinct(df$uniqueSample)
+
+alignments <- bind_rows(lapply(split(df, paste(df$uniqueSample)), function(x){
   
-  # Concatenate all the source / genome fasta files into a single file.
-  system(paste('cat ', paste0(file.path(config$outputDir, 'sampleReads', x$file), collapse = ' '), ' > ', 
-               paste0(file.path(config$outputDir, 'tmp', paste0(f, '.fasta')))))
-  
-  fasta <- readFasta(file.path(config$outputDir, 'tmp', paste0(f, '.fasta')))
-  invisible(file.remove(file.path(config$outputDir, 'tmp', paste0(f, '.fasta'))))
+  fasta <- readDNAStringSet(file.path(config$outputDir, 'sampleReads', x$file))
   
   # Here we create a table of unique sequences to align to the reference geneome.
   # The ids associated with each unique sequnce are stored so that they can be 
   # expanded back to match the original data after the alignemnts. 
   
-  d <- tibble(id  = as.character(fasta@id),
-              seq = as.character(fasta@sread)) %>%
+  d <- tibble(id  = names(fasta),
+              seq = as.character(fasta)) %>%
        group_by(seq) %>%
         summarise(ids = list(id)) %>%
        ungroup() %>%
@@ -493,14 +500,25 @@ alignments <- bind_rows(lapply(split(d, paste(d$source, d$refGenomeBLATdb)), fun
   cluster <- makeCluster(config$genomAlignment.CPUs)
   clusterExport(cluster, c('config', 'db'), envir = environment())
   
-  logMsg(config, paste0('Starting ', x$source[1], ' alignments'), config$logFile)
+  logMsg(config, paste0('Aligning unique sample ', nSample, '/', nSamplesToAlign), config$logFile)
+  nSample <<- nSample + 1
   
-  
-  r <- bind_rows(parLapply(cluster, split(fasta, ceiling(seq_along(fasta)/config$alignment.chunk.size)), function(y){
+  r <- bind_rows(parLapply(cluster, split(fasta, dplyr::ntile(1:length(fasta), config$genomAlignment.CPUs)), function(y){
          library(ShortRead)
          library(tidyverse)
          source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
-         alignReads.BLAT(y, db)
+         a <- alignReads.BLAT(y, db)
+         
+         # Apply generic alignment filters.
+         if(nrow(a) > 0){
+           a <- dplyr::filter(a, alignmentPercentID >= config$alignment.genome.minPercentID,
+                                 tNumInsert  <= 1, 
+                                 qNumInsert  <= 1,
+                                 tBaseInsert <= 2,
+                                 qBaseInsert <= 2)
+         } 
+         
+         a
        }))
   
   stopCluster(cluster)
@@ -520,14 +538,7 @@ save(list = ls(all=TRUE), file = file.path(config$outputDir, 'savePoint2.RData')
 # /home/kevin/projects/wistar/Wistar20201004/output_data/condensed_sites.Wistar20201004.csv
 
 
-# Apply generic alignment filters.
-alignments <- 
-  filter(alignments, 
-         alignmentPercentID >= config$alignment.genome.minPercentID,
-         tNumInsert  <= 1, 
-         qNumInsert  <= 1,
-         tBaseInsert <= 2,
-         qBaseInsert <= 2) 
+
 
 alignments$posid <- paste0(alignments$tName, alignments$strand, ifelse(alignments$strand == '+', alignments$tStart, alignments$tEnd))
 
