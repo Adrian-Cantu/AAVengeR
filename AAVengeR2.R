@@ -15,15 +15,14 @@ options(stringsAsFactors = FALSE)
 #configFile <- commandArgs(trailingOnly = TRUE)
 #if(! file.exists(configFile)) stop('Error -- configuration file not found.')
 #config  <- read_yaml(configFile)
-#source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
+#source(file.path(config$softwareDir, 'AAVengeR2.lib.R'))
 
-config <- read_yaml('/home/everett/projects/AAVengeR_runs/configs/config.wistar.yml')
+config <- read_yaml('/home/everett/projects/AAVengeR_runs/configs/config.Sabatino.yml2')
 #config <- read_yaml('/home/everett/projects/AAVengeR_runs/configs/config.Sabatino.yml')
 #config <- read_yaml('/home/everett/SparkAAV/AAVengeR/configs/config.vector.yml')
-source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
+source(file.path(config$softwareDir, 'AAVengeR2.lib.R'))
 
 config$startTime <- ymd_hms(format(Sys.time(), "%y-%m-%d %H:%M:%S"))
-
 
 
 # Prepare run session.
@@ -36,7 +35,7 @@ config$logFile <- file.path(config$outputDir, 'logs', 'log')
 write(date(), file = config$logFile)
 
 # Max edit distance between ITR/LTR representative and all others for a fragment / length of representative 
-if(! 'LTR_remnant_maxDifference' %in% names(config)) config$LTR_remnant_maxDifference <- 0.15
+if(! 'fragmentProcessing.rep.maxDifference' %in% names(config)) config$fragmentProcessing.rep.maxDifference <- 0.15
 
 # Fragment ITR/LTR assembly conflict resolution.
 # When fragments are assembled into sites, their representative ITR/LTR sequences are compared 
@@ -47,20 +46,20 @@ if(! 'LTR_remnant_maxDifference' %in% names(config)) config$LTR_remnant_maxDiffe
 # discarding the disimiliar fragments. This parameter defines the min. threshold percentange of fragments 
 # with similiar ITR/LTR sequences to allow a site to progress. Future versions of the software may 
 # consider spliting the site.
-if(! 'fragmentAssemblyConflictResolution' %in% names(config)) config$fragmentAssemblyConflictResolution <- 2/3
-if(config$fragmentAssemblyConflictResolution < 0.5) stop('fragmentAssemblyConflictResolution parmater must be > 0.5')
+if(! 'fragmentProcessing.assemblyConflictResolution' %in% names(config)) config$fragmentProcessing.assemblyConflictResolution <- 2/3
+if(config$fragmentProcessing.assemblyConflictResolution < 0.5) stop('fragmentProcessing.assemblyConflictResolution parmater must be > 0.5')
 
 
 
 # Read in the sample data and add default column values if not present.
 samples <- read_delim(config$sampleConfigFile, delim  = ',', col_names = TRUE, col_types = cols())
-checkConfigFilePaths(samples$refGenomeBLATdb)
+
 if(config$indexReads.rc) samples$index1Seq <- as.character(reverseComplement(DNAStringSet(samples$index1Seq)))
-if('filter.removeVectorReadPairs' %in% names(config) &  config$filter.removeVectorReadPairs == TRUE & !'vectorSeqFile' %in% names(samples)){
-  stop('A vectorSeqFile column must be defined in your sample config file if filter.removeVectorReadPairs is defined in you config file.')
+if('alignment.removeVectorReadPairs' %in% names(config) &  config$alignment.removeVectorReadPairs == TRUE & !'anchorRead.seqFilter.file' %in% names(samples)){
+  stop('A anchorRead.seqFilter.file column must be defined in your sample config file if alignment.removeVectorReadPairs is defined in you config file.')
 }
 
-if('vectorSeqFile' %in% names(samples)) checkConfigFilePaths(samples$vectorSeqFile)
+if('anchorRead.seqFilter.file' %in% names(samples)) checkConfigFilePaths(samples$anchorRead.seqFilter.file)
 if(! 'subject' %in% names(samples))   samples$subject <- 'subject'
 if(! 'replicate' %in% names(samples)) samples$replicate <- 1
 if(any(grepl('~|\\|', paste(samples$subject, samples$sample, samples$replicate)))) stop('Error -- tildas (~) are reserved characters and can not be used in the subject, sample, or replicate sample configuration columns.')
@@ -68,24 +67,23 @@ if(any(grepl('~|\\|', paste(samples$subject, samples$sample, samples$replicate))
 samples$uniqueSample <- paste0(samples$subject, '~', samples$sample, '~', samples$replicate)
 if(any(duplicated(samples$uniqueSample))) stop('Error -- all subject, sample, replicate id combinations are not unique.')
 
-
 cluster <- makeCluster(config$demultiplexing.CPUs)
 clusterExport(cluster, c('config', 'samples'))
 
 # Quality trim virus reads and break reads.
 invisible(parLapply(cluster, 
-                    list(c(config$breakReadsFile,  config$sequence.chunk.size, 'breakReads',  file.path(config$outputDir, 'seqChunks')),
-                         c(config$virusReadsFile,  config$sequence.chunk.size, 'virusReads',  file.path(config$outputDir, 'seqChunks'))), 
+                    list(c(config$adriftReadsFile,  config$sequence.chunk.size, 'adriftReads',  file.path(config$outputDir, 'seqChunks')),
+                         c(config$anchorReadsFile,  config$sequence.chunk.size, 'anchorReads',  file.path(config$outputDir, 'seqChunks'))), 
                  function(x){
                    library(ShortRead)
-                   source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
+                   source(file.path(config$softwareDir, 'AAVengeR2.lib.R'))
                    qualTrimReads(x[[1]], x[[2]], x[[3]], x[[4]])
                 }))
 
 
 # Collate trimmed reads.
-system(paste('cat', file.path(config$outputDir, 'seqChunks', 'virus*'), ' > ', file.path(config$outputDir, 'trimmedVirusReads.fastq')))
-system(paste('cat', file.path(config$outputDir, 'seqChunks', 'break*'), ' > ', file.path(config$outputDir, 'trimmedBreakReads.fastq')))
+system(paste('cat', file.path(config$outputDir, 'seqChunks', 'anchor*'), ' > ', file.path(config$outputDir, 'trimmedAnchorReads.fastq')))
+system(paste('cat', file.path(config$outputDir, 'seqChunks', 'adrift*'), ' > ', file.path(config$outputDir, 'trimmedAdriftReads.fastq')))
 system(paste('rm',  file.path(config$outputDir, 'seqChunks', '*')))
 
 
@@ -93,31 +91,31 @@ system(paste('rm',  file.path(config$outputDir, 'seqChunks', '*')))
 logMsg(config, 'Converting index reads to DNA strings.', config$logFile)
 index1Reads <- readFastq(config$index1ReadsFile)
 index1Reads <- Reduce('append', parLapply(cluster, split(index1Reads, ntile(1:length(index1Reads), config$demultiplexing.CPUs)), 
-               function(x){source(file.path(config$softwareDir, 'AAVengeR.lib.R')); shortRead2DNAstringSet(x)}))
+               function(x){source(file.path(config$softwareDir, 'AAVengeR2.lib.R')); shortRead2DNAstringSet(x)}))
 
 if(config$correctGolayIndexReads){
   logMsg(config, 'Correcting golay bar code reads.', config$logFile)
   index1Reads <- Reduce('append', parLapply(cluster, split(index1Reads, ntile(1:length(index1Reads), config$demultiplexing.CPUs)), golayCorrection))
 }
 
-logMsg(config, 'Converting virus reads to DNA strings.', config$logFile)
-virusReads <- readFastq(file.path(config$outputDir, 'trimmedVirusReads.fastq'))
-virusReads <- Reduce('append', parLapply(cluster, split(virusReads, ntile(1:length(virusReads), config$demultiplexing.CPUs)), 
-                                          function(x){source(file.path(config$softwareDir, 'AAVengeR.lib.R')); shortRead2DNAstringSet(x)}))
+logMsg(config, 'Converting anchor reads to DNA strings.', config$logFile)
+anchorReads <- readFastq(file.path(config$outputDir, 'trimmedAnchorReads.fastq'))
+anchorReads <- Reduce('append', parLapply(cluster, split(anchorReads, ntile(1:length(anchorReads), config$demultiplexing.CPUs)), 
+                                          function(x){source(file.path(config$softwareDir, 'AAVengeR2.lib.R')); shortRead2DNAstringSet(x)}))
 
 logMsg(config, 'Converting break reads to DNA strings.', config$logFile)
-breakReads <- readFastq(file.path(config$outputDir, 'trimmedBreakReads.fastq'))
-breakReads <- Reduce('append', parLapply(cluster, split(breakReads, ntile(1:length(breakReads), config$demultiplexing.CPUs)), 
-                                          function(x){source(file.path(config$softwareDir, 'AAVengeR.lib.R')); shortRead2DNAstringSet(x)}))
+adriftReads <- readFastq(file.path(config$outputDir, 'trimmedAdriftReads.fastq'))
+adriftReads <- Reduce('append', parLapply(cluster, split(adriftReads, ntile(1:length(adriftReads), config$demultiplexing.CPUs)), 
+                                          function(x){source(file.path(config$softwareDir, 'AAVengeR2.lib.R')); shortRead2DNAstringSet(x)}))
 
-invisible(file.remove(file.path(config$outputDir, 'trimmedVirusReads.fastq')))
-invisible(file.remove(file.path(config$outputDir, 'trimmedBreakReads.fastq')))
+invisible(file.remove(file.path(config$outputDir, 'trimmedAnchorReads.fastq')))
+invisible(file.remove(file.path(config$outputDir, 'trimmedAdriftReads.fastq')))
 
 
 # Slow
 logMsg(config, 'Synchronizing trimmed reads.', config$logFile)
-reads <- syncReads(index1Reads, virusReads, breakReads)
-index1Reads <- reads[[1]];  virusReads  <- reads[[2]];  breakReads  <- reads[[3]]
+reads <- syncReads(index1Reads, anchorReads, adriftReads)
+index1Reads <- reads[[1]];  anchorReads  <- reads[[2]];  adriftReads  <- reads[[3]]
 rm(reads)
 gc()
 
@@ -128,15 +126,15 @@ chunkNum <- 1
 d <- tibble(i = ntile(1:length(index1Reads), config$demultiplexing.CPUs), n = 1:length(index1Reads))
 invisible(lapply(split(d, d$i), function(x){
   index1Reads <- index1Reads[min(x$n):max(x$n)]
-  virusReads  <- virusReads[min(x$n):max(x$n)]
-  breakReads  <- breakReads[min(x$n):max(x$n)]
-  save(index1Reads, virusReads, breakReads, file = file.path(config$outputDir, 'seqChunks', chunkNum))
+  anchorReads  <- anchorReads[min(x$n):max(x$n)]
+  adriftReads  <- adriftReads[min(x$n):max(x$n)]
+  save(index1Reads, anchorReads, adriftReads, file = file.path(config$outputDir, 'seqChunks', chunkNum))
   chunkNum <<- chunkNum + 1
 }))
 logMsg(config, paste0(chunkNum-1, ' data chunks created.'), config$logFile)
 
 # Clean up and free up memory. 
-rm(d, chunkNum, index1Reads, virusReads, breakReads)
+rm(d, chunkNum, index1Reads, anchorReads, adriftReads)
 gc()
 
 
@@ -148,34 +146,11 @@ if(! dir.exists(file.path(config$outputDir, 'logs', 'cutadapt'))) dir.create(fil
 if(! dir.exists(file.path(config$outputDir, 'tmp', 'cutadapt'))) dir.create(file.path(config$outputDir, 'tmp', 'cutadapt'))
 
 
-#------
-# readTest <- c('M03249:101:000000000-JBCKB:1:1110:15651:11419', 'M03249:101:000000000-JBCKB:1:2101:11897:14602',
-#               'M03249:101:000000000-JBCKB:1:2110:28483:12487', 'M03249:101:000000000-JBCKB:1:1106:24289:24248',
-#               'M03249:101:000000000-JBCKB:1:1102:20269:11120', 'M03249:101:000000000-JBCKB:1:1102:4940:21639',
-#               'M03249:101:000000000-JBCKB:1:1105:20956:7160', 'M03249:101:000000000-JBCKB:1:1107:10394:13920',
-#               'M03249:101:000000000-JBCKB:1:2110:18642:7161', 'M03249:101:000000000-JBCKB:1:2106:17454:23220',
-#               'M03249:101:000000000-JBCKB:1:2107:17759:19272', 'M03249:101:000000000-JBCKB:1:1101:10900:18489',
-#               'M03249:101:000000000-JBCKB:1:1102:9660:11650', 'M03249:101:000000000-JBCKB:1:1102:13855:23112',
-#               'M03249:101:000000000-JBCKB:1:2111:23402:20193', 'M03249:101:000000000-JBCKB:1:1101:15828:15238',
-#               'M03249:101:000000000-JBCKB:1:1101:23522:16964', 'M03249:101:000000000-JBCKB:1:1102:19002:1087',
-#               'M03249:101:000000000-JBCKB:1:1101:6263:8951', 'M03249:101:000000000-JBCKB:1:1101:6243:10295',
-#               'M03249:101:000000000-JBCKB:1:1101:20203:16560', 'M03249:101:000000000-JBCKB:1:1102:7430:7701',
-#               'M03249:101:000000000-JBCKB:1:1106:22424:6042', 'M03249:101:000000000-JBCKB:1:1114:17255:10066',
-#               'M03249:101:000000000-JBCKB:1:2108:22795:3492', 'M03249:101:000000000-JBCKB:1:1101:16882:9527',
-#               'M03249:101:000000000-JBCKB:1:1103:23169:25008', 'M03249:101:000000000-JBCKB:1:2112:14338:1708') 
-# 
-# ids <- unlist(lapply(list.files(file.path(config$outputDir, 'seqChunks'), full.names = TRUE), function(f){
-#     load(f)
-#     names(breakReads)
-# }))
-#-----
-
-
 invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks'), full.names = TRUE), function(f){
 #invisible(lapply(list.files(file.path(config$outputDir, 'seqChunks'), full.names = TRUE), function(f){
   library(ShortRead)
   library(tidyverse)
-  source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
+  source(file.path(config$softwareDir, 'AAVengeR2.lib.R'))
   
   load(f)
   
@@ -183,28 +158,21 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
   chunk.n <- unlist(str_match_all(f, '(\\d+)$'))[2]
   logFile <- file.path(config$outputDir, 'logs', paste0('seqChunk_', chunk.n, '.log'))
   
-  #if('M03249:101:000000000-JBCKB:1:1101:16545:21790' %in% names(breakReads)) browser()
-  # as.character(breakReads[names(breakReads) %in% 'M03249:101:000000000-JBCKB:1:1101:16545:21790'])
- 
-  #testIndexes <- unique(unname(as.character(index1Reads[names(index1Reads) %in% readTest]))) 
    
   # Loop through samples in sample data file to demultiplex and apply read specific filters.
   invisible(lapply(1:nrow(samples), function(r){
     r <- samples[r,]
     
-    #if(r$index1Seq %in% testIndexes) browser()
-    # readTest[readTest %in% names(virusReads)]
-    
     # Create barcode demultiplexing vectors.
-    v1 <- vcountPattern(r$index1Seq, index1Reads, max.mismatch = config$index1Reads.maxMismatch) > 0
+    v1 <- vcountPattern(r$index1.seq, index1Reads, max.mismatch = config$index1Reads.maxMismatch) > 0
     logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', sum(v1), ' reads pass barcode filter.'), logFile)
     
     
     # Create break read linker barcode demultiplexing vector.
-    v2 <- rep(TRUE, length(breakReads))
-    if('breakReads.linkerBarcode.maxMismatch' %in% names(config)){
-      testSeq <- substr(r$breakReadLinkerSeq, r$breakReadLinkerBarcode.start, r$breakReadLinkerBarcode.end)
-      v2 <- vcountPattern(testSeq, subseq(breakReads, r$breakReadLinkerBarcode.start, r$breakReadLinkerBarcode.end), max.mismatch = config$breakReads.linkerBarcode.maxMismatch) > 0
+    v2 <- rep(TRUE, length(adriftReads))
+    if('adriftReads.linkerBarcode.maxMismatch' %in% names(config)){
+      testSeq <- substr(r$adriftRead.linker.seq, r$adriftRead.linkerBarcode.start, r$adriftRead.linkerBarcode.end)
+      v2 <- vcountPattern(testSeq, subseq(adriftReads, r$adriftRead.linkerBarcode.start, r$adriftRead.linkerBarcode.end), max.mismatch = config$adriftReads.linkerBarcode.maxMismatch) > 0
       logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', sum(v2), ' reads pass linker code filter.'), logFile)
     }
     
@@ -214,48 +182,48 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
       logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') No reads demultiplexed.'), logFile)
       return()
     } else {
-      reads <- syncReads(index1Reads[i], virusReads[i], breakReads[i])
-      index1Reads <- reads[[1]];  virusReads  <- reads[[2]]; breakReads  <- reads[[3]]
+      reads <- syncReads(index1Reads[i], anchorReads[i], adriftReads[i])
+      index1Reads <- reads[[1]];  anchorReads  <- reads[[2]]; adriftReads  <- reads[[3]]
     }
     
-    # Test the start of virus reads (static or blast search options only)
-    # Not compatible with virusReads.captureLTRseq.method = 'lentiViralHMM'
-    v1 <- rep(TRUE, length(virusReads))
-    if('virusReads.startTest.maxMismatch' %in% names(config) & config$virusReads.captureLTRseq.method != 'blastProvidedTemplates'){
-      v1 <- Reduce('|', lapply(unlist(strsplit(r$virusLTRseq, ';')), function(x){ 
-        testSeq <- substr(unlist(strsplit(x, ','))[2], 1,  config$virusReads.startTest.length)
-        vcountPattern(testSeq, subseq(virusReads, 1, config$virusReads.startTest.length), max.mismatch = config$virusReads.startTest.maxMismatch) > 0
+    # Test the start of anchor reads (static or blast search options only)
+    # Not compatible with anchorReads.captureLTRseq.method = 'lentiViralHMM'
+    v1 <- rep(TRUE, length(anchorReads))
+    if('anchorReads.startTest.maxMismatch' %in% names(config) & config$anchorReads.captureLTRseq.method != 'lentiViralHMM'){
+      v1 <- Reduce('|', lapply(unlist(strsplit(r$anchorRead.identification, ';')), function(x){ 
+        testSeq <- substr(unlist(strsplit(x, ','))[2], 1,  config$anchorReads.startTest.length)
+        vcountPattern(testSeq, subseq(anchorReads, 1, config$anchorReads.startTest.length), max.mismatch = config$anchorReads.startTest.maxMismatch) > 0
       }))
       
-      logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', sum(!v1), ' reads removed by virus read start test filter (', config$virusReads.startTest.length, ' NTs).'), logFile)
+      logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', sum(!v1), ' reads removed by virus read start test filter (', config$anchorReads.startTest.length, ' NTs).'), logFile)
     }
     
     if(! any(v1)){
-      logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', sum(!v1), ' All reads removed by virus read start test filter.'))
+      logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', sum(!v1), ' All reads removed by virus read start test filter.'), logFile)
       return()
     }
-      
-  
+
     
     # Capture the LTR/ITR sequences.
-    if(config$virusReads.captureLTRseq.method == 'blastProvidedTemplates'){
-      o <- captureLTRseqs(virusReads, r$virusLTRseq)
-    } else if(config$virusReads.captureLTRseq.method == 'lentiViralHMM'){  
-      o <- captureLTRseqsLentiHMM(virusReads, r$virusLTRseq)
-    } else if(config$virusReads.captureLTRseq.method == 'staticLTRseq'){
-      o <- captureStaticLTRseq(virusReads, r$virusLTRseq)
+    if(config$anchorReads.captureLTRseq.method == 'blastProvidedTemplates'){
+      o <- captureLTRseqs(anchorReads, r$anchorRead.identification)
+    } else if(config$anchorReads.captureLTRseq.method == 'lentiViralHMM'){  
+      o <- captureLTRseqsLentiHMM(anchorReads, r$anchorRead.identification)
+    } else if(config$anchorReads.captureLTRseq.method == 'staticLTRseq'){
+      o <- captureStaticLTRseq(anchorReads, r$anchorRead.identification)
     } else {
       stop('Error - No LTR capture method provided.')
     }
     
-    
-    #if('M03249:101:000000000-JBCKB:1:1101:16545:21790' %in% names(breakReads)) browser()
-    #as.character(breakReads[names(breakReads) %in% 'M03249:101:000000000-JBCKB:1:1101:16545:21790'])
-    
-    
-    # Here we require all ITR / LTR remnants to be at least 12 NTs because we will use them as adaptor sequences for cutadapt 
+    # Here we require all ITR / LTR remnants to be at least config$anchorReads.identification.minLength NTs because we will use them as adaptor sequences for cutadapt 
     if(! all(names(o$reads) == o$LTRs$id)) stop('LTRseq capture error.')
-    i <- nchar(o$LTRs$LTRseq) > 12
+    i <- nchar(o$LTRs$LTRseq) >= config$anchorReads.identification.minLength
+    
+    if(sum(i) == 0){
+      logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') No anchor reads returned a start sequence >= ', config$anchorReads.identification.minLength, ' NTs'))
+      return()
+    }
+    
     o$reads <- o$reads[i]
     o$LTRs  <- o$LTRs[i,]
     
@@ -267,82 +235,79 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
       logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', length(o$reads), ' reads remaining after LTR/ITR capture.'), logFile)
     
       # Here we limit the reads to those with ITRs/LTRs > 12 NT (defined in o)
-      virusReads  <- virusReads[names(virusReads) %in% names(o$reads)]
-      reads <- syncReads(index1Reads, virusReads, breakReads)
-      index1Reads <- reads[[1]];  virusReads  <- reads[[2]]; breakReads  <- reads[[3]]
+      anchorReads  <- anchorReads[names(anchorReads) %in% names(o$reads)]
+      reads <- syncReads(index1Reads, anchorReads, adriftReads)
+      index1Reads <- reads[[1]];  anchorReads  <- reads[[2]]; adriftReads  <- reads[[3]]
     }
     
     # Create the over read sequence from the concensus of the break read common linker and thelast 12 NTs 
     # of the captured virus reads ITR / LTR sequences. 
   
-    virusReadOverReadSeq <- substr(r$breakReadLinkerSeq, nchar(r$breakReadLinkerSeq)-12, nchar(r$breakReadLinkerSeq))
-    virusReadOverReadSeq <- Biostrings::DNAString(virusReadOverReadSeq)
-    virusReadOverReadSeq <- as.character(Biostrings::reverseComplement(virusReadOverReadSeq))
+    anchorReadOverReadSeq <- substr(r$adriftRead.linker.seq, nchar(r$adriftRead.linker.seq)-config$anchorReads.identification.minLength, nchar(r$adriftRead.linker.seq))
+    anchorReadOverReadSeq <- Biostrings::DNAString(anchorReadOverReadSeq)
+    anchorReadOverReadSeq <- as.character(Biostrings::reverseComplement(anchorReadOverReadSeq))
     
-    logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', 'virus read over read sequence determined to be ', 
-                          virusReadOverReadSeq, ' from parsing provided linker sequence.'), logFile)
+    logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', ' anchor read over read sequence determined to be ', 
+                          anchorReadOverReadSeq, ' from parsing provided linker sequence.'), logFile)
 
     # Trim virus read over-read sequences by looking for the reverse complement of end of the common linker sequence.
-    virusReads <- trimOverReadSeq(virusReads, virusReadOverReadSeq, paste0('seqChunk_', chunk.n, '_', r$uniqueSample, '.virusReads.trimadapt.log'))
+    anchorReads <- trimOverReadSeq(anchorReads, anchorReadOverReadSeq, logFile = paste0('seqChunk_', chunk.n, '_', r$uniqueSample, '.anchorReads.trimadapt.log'))
     
-    
-    # JKE
-    #if(grepl('u3', r$sample) & any(u3_ids_toStudy %in% names(breakReads))) browser()
     
     # Trim break read over-read sequence by looking for the reverse complement of captured ITR/LTR sequences.
-    breakReads <- trimOverReadSeq2(breakReads, o, paste0('seqChunk_', chunk.n, '_', r$uniqueSample, '.breakReads.trimadapt.log'))
+    adriftReads <- trimOverReadSeq2(adriftReads, o, logFile = paste0('seqChunk_', chunk.n, '_', r$uniqueSample, '.adriftReads.trimadapt.log'))
     
-    v1 <- width(virusReads) - nchar(o$LTRs[match(names(virusReads), o$LTRs$id),]$LTRseq) >= config$trimmedRead.minLength
-    v2 <- width(breakReads) - nchar(r$breakReadLinkerSeq) >= config$trimmedRead.minLength
+    v1 <- width(anchorReads) - nchar(o$LTRs[match(names(anchorReads), o$LTRs$id),]$LTRseq) >= config$trimmedRead.minLength
+    v2 <- width(adriftReads) - nchar(r$adriftRead.linker.seq) >= config$trimmedRead.minLength
     
-    reads <- syncReads(index1Reads, virusReads[v1], breakReads[v2])
-    index1Reads <- reads[[1]];  virusReads  <- reads[[2]]; breakReads  <- reads[[3]]
+    reads <- syncReads(index1Reads, anchorReads[v1], adriftReads[v2])
+    index1Reads <- reads[[1]];  anchorReads  <- reads[[2]]; adriftReads  <- reads[[3]]
     
-    if(length(virusReads) == 0){
+    if(length(anchorReads) == 0){
       logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') No reads remaining after over-read trimming and length check.'), logFile)
       return()
     }
     
     
     # Test for ITR/LTR reads that align to the vector plasmid.
-    # This test previously used full breakReads but here we changed to the ends of virus reads which are 
+    # This test previously used full adriftReads but here we changed to the ends of virus reads which are 
     # expected to align to genomic sequences.
     
-    if(config$filter.removeVectorReadPairs){
-      reads <- subseq(virusReads, width(virusReads) - config$trimmedRead.minLength + 1, width(virusReads))
-      vectorReadIDs <- getVectorReadIDs(reads, config, r$vectorSeqFile)
+    if(config$alignment.removeVectorReadPairs){
+      reads <- subseq(anchorReads, width(anchorReads) - config$trimmedRead.minLength + 1, width(anchorReads))
+      vectorReadIDs <- getVectorReadIDs(reads, config, r$anchorRead.seqFilter.file)
     
       if(length(vectorReadIDs) > 0){
-        virusReadsVector <- virusReads[names(virusReads) %in% vectorReadIDs]
-        breakReadsVector <- breakReads[names(breakReads) %in% vectorReadIDs]
+        anchorReadsVector <- anchorReads[names(anchorReads) %in% vectorReadIDs]
+        adriftReadsVector <- adriftReads[names(adriftReads) %in% vectorReadIDs]
     
-        names(virusReadsVector) <- paste0(names(virusReadsVector), '|', r$uniqueSample)
-        names(breakReadsVector) <- paste0(names(breakReadsVector), '|', r$uniqueSample)
+        names(anchorReadsVector) <- paste0(names(anchorReadsVector), '|', r$uniqueSample)
+        names(adriftReadsVector) <- paste0(names(adriftReadsVector), '|', r$uniqueSample)
         
-        writeFasta(virusReadsVector, file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.virusReadsVector.', chunk.n, '.fasta')))
-        writeFasta(breakReadsVector, file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.breakReadsVector.', chunk.n, '.fasta')))
+        writeFasta(anchorReadsVector, file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.anchorReadsVector.', chunk.n, '.fasta')))
+        writeFasta(adriftReadsVector, file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.adriftReadsVector.', chunk.n, '.fasta')))
       }
       
       logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', length(vectorReadIDs), ' reads aligned to the vector and will be removed.'), logFile)
       
       # Filter break point reads against read ids returned by vectorReadIDs().
-      breakReads <- breakReads[! names(breakReads) %in% vectorReadIDs]
+      adriftReads <- adriftReads[! names(adriftReads) %in% vectorReadIDs]
     
       
       # Sync reads. 
-      reads <- syncReads(index1Reads, virusReads, breakReads)
-      index1Reads <- reads[[1]];  virusReads  <- reads[[2]]; breakReads  <- reads[[3]]
+      reads <- syncReads(index1Reads, anchorReads, adriftReads)
+      index1Reads <- reads[[1]];  anchorReads  <- reads[[2]]; adriftReads  <- reads[[3]]
       
-      if(length(virusReads) == 0){
+      if(length(anchorReads) == 0){
         logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') No reads remaining after vector read removal and read synchronization.'), logFile)
         return()
       } else {
-        logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', length(virusReads), ' reads remain after removing vector aligned reads and synchronizing.'), logFile)
+        logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', length(anchorReads), ' reads remain after removing vector aligned reads and synchronizing.'), logFile)
       }
     }
     
     # Sync the LTR capture objects with the current read list.
-    o$reads <- virusReads
+    o$reads <- anchorReads
     o$LTRs <- o$LTRs[o$LTRs$id %in% names(o$reads),]
     
     o$reads <- o$reads[match(o$LTRs$id, names(o$reads))]                      # Order the reads to match LTR table.
@@ -354,14 +319,14 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
     saveRDS(o$LTRs, file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.LTRseqs.', chunk.n, '.rds')))
        
     # Record reads which were removed.
-    ids <- names(virusReads)[! names(virusReads) %in% names(o$reads)]
+    ids <- names(anchorReads)[! names(anchorReads) %in% names(o$reads)]
     if(length(ids) > 0) writeLines(ids, file.path(config$outputDir, 'readsRemoved', paste0('LTRcapture.', chunk.n)))
        
-    virusReads <- o$reads
-    reads <- syncReads(index1Reads, virusReads, breakReads)
-    index1Reads <- reads[[1]];  virusReads  <- reads[[2]]; breakReads  <- reads[[3]]
+    anchorReads <- o$reads
+    reads <- syncReads(index1Reads, anchorReads, adriftReads)
+    index1Reads <- reads[[1]];  anchorReads  <- reads[[2]]; adriftReads  <- reads[[3]]
       
-    if(length(virusReads) == 0){
+    if(length(anchorReads) == 0){
       logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') No reads remaining after LTR capture and trimming.'), logFile)
       return()
     }
@@ -370,114 +335,84 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
     # Capture random ids.
     randomIDs <- data.frame()
     if('breakReadLinkerBarcode.start' %in% names(r) & 'breakReadLinkerBarcode.end' %in% names(r)){
-      randomIDs <- as.character(subseq(breakReads, r$breakReadLinkerRandomID.start, r$breakReadLinkerRandomID.end))
+      randomIDs <- as.character(subseq(adriftReads, r$adriftRead.linkerRandomID.start, r$adriftRead.linkerRandomID.end))
       randomIDs <- data.frame(randomSeqID = unname(randomIDs), readID = names(randomIDs))
       logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') captured random linker ids.'), logFile)
     }
     
     # Remove leading linker from break point reads.
-    breakReads <- trimLeadingSeq(breakReads, r$breakReadLinkerSeq)
-    breakReads <- breakReads[width(breakReads) >= config$trimmedRead.minLength]
+    adriftReads <- trimLeadingSeq(adriftReads, r$adriftRead.linker.seq)
+    adriftReads <- adriftReads[width(adriftReads) >= config$trimmedRead.minLength]
   
-    reads <- syncReads(index1Reads, virusReads, breakReads)
-    index1Reads <- reads[[1]];  virusReads  <- reads[[2]]; breakReads  <- reads[[3]]
+    reads <- syncReads(index1Reads, anchorReads, adriftReads)
+    index1Reads <- reads[[1]];  anchorReads  <- reads[[2]]; adriftReads  <- reads[[3]]
     
-    if(length(virusReads) == 0){
+    if(length(anchorReads) == 0){
       logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') No reads remaining after second read size filter.'), logFile)
       return()
     } 
     
     # Write out final reads. Add sample names to read IDs.
-    names(breakReads) <- paste0(names(breakReads), '|', r$uniqueSample)
-    names(virusReads) <- paste0(names(virusReads), '|', r$uniqueSample)
+    names(adriftReads) <- paste0(names(adriftReads), '|', r$uniqueSample)
+    names(anchorReads) <- paste0(names(anchorReads), '|', r$uniqueSample)
     
     save(randomIDs, file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.randomIDs.', chunk.n, '.RData')))
-    writeFasta(breakReads,  file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.breakReads.', chunk.n, '.fasta')))
-    writeFasta(virusReads,  file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.virusReads.', chunk.n, '.fasta')))
+    writeFasta(adriftReads,  file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.adriftReads.', chunk.n, '.fasta')))
+    writeFasta(anchorReads,  file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.anchorReads.', chunk.n, '.fasta')))
     
-    logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') completed with ', length(virusReads), ' reads.'), logFile)
+    logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') completed with ', length(anchorReads), ' reads.'), logFile)
   }))
   
   logMsg(config, paste0('Read data chunk ', chunk.n, ' completed.'), file.path(config$outputDir, 'logs', 'log'))
 }))
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 stopCluster(cluster)
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # Collate demultiplexed reads using file name snibets.
-collateSampleReads('virusReads')
-collateSampleReads('breakReads')
+collateSampleReads('anchorReads')
+collateSampleReads('adriftReads')
 
 
 # Collate read pairs where the break point read aligns well to the vector for downstream analysis.
-if(config$filter.removeVectorReadPairs){
+if(config$alignment.removeVectorReadPairs){
   logMsg(config, 'Collating read pairs which were removed because the break read aligned to the vector.', config$logFile)
-  collateSampleReads('virusReadsVector')
-  collateSampleReads('breakReadsVector')
+  collateSampleReads('anchorReadsVector')
+  collateSampleReads('adriftReadsVector')
 }
 
 
 # Organize read files by reference genome and read source (virusRead or breakRead).
 # This will allow samples to be aligned to different genomes defined in the samples table.
-df <- tibble(file = list.files(file.path(config$outputDir, 'sampleReads'), pattern = '\\.virusReads\\.|\\.breakReads\\.'),
+df <- tibble(file = list.files(file.path(config$outputDir, 'sampleReads'), pattern = '\\.anchorReads\\.|\\.adriftReads\\.'),
             uniqueSample = unlist(lapply(strsplit(file, '\\.'), function(x) paste0(x[1:(length(x) - 2)], collapse = '.'))),
-            source = ifelse(grepl('virusRead', file), 'virusReads', 'breakReads')) %>%
-     left_join(select(samples, uniqueSample, refGenomeBLATdb), by = 'uniqueSample')
+            source = ifelse(grepl('anchorRead', file), 'anchorReads', 'adriftReads')) %>%
+     left_join(select(samples, uniqueSample, refGenome.id), by = 'uniqueSample')
 
-# file                                      uniqueSample             source      refGenomeBLATdb                                        
-# p100-2592~GTSP3806_u3~1.breakReads.fasta  p100-2592~GTSP3806_u3~1  breakReads  /home/everett/data/sequenceDatabases/BLAT/hg38/hg38.2bit
-# p100-2592~GTSP3806_u3~1.virusReads.fasta  p100-2592~GTSP3806_u3~1  virusReads  /home/everett/data/sequenceDatabases/BLAT/hg38/hg38.2bit
-# p100-2592~GTSP3806_u3~2.breakReads.fasta  p100-2592~GTSP3806_u3~2  breakReads  /home/everett/data/sequenceDatabases/BLAT/hg38/hg38.2bit
-# p100-2592~GTSP3806_u3~2.virusReads.fasta  p100-2592~GTSP3806_u3~2  virusReads  /home/everett/data/sequenceDatabases/BLAT/hg38/hg38.2bit
+# file                                uniqueSample    source        refGenome.id                                        
+# pH19~GTSP2169~1.adriftReads.fasta   pH19~GTSP2169~1  adriftReads  canFam3     
+# pH19~GTSP2169~1.anchorReads.fasta   pH19~GTSP2169~1  anchorReads  canFam3     
+# pH19~GTSP2170~1.adriftReads.fasta   pH19~GTSP2170~1  adriftReads  canFam3     
+# pH19~GTSP2170~1.anchorReads.fasta   pH19~GTSP2170~1  anchorReads  canFam3
 
+# Convert refGenome id to refGenome BLAT database file within AAVenger data directory.
+df$refGenome <- file.path(config$softwareDir, 'data', 'blatDBs', paste0(df$refGenome.id, '.2bit'))
 
 
 
 # Align the sample FASTA files defined in the previous data frame to their respective genomes. 
-# This is done by grouping reads by type (virusReads / breakReads) and reference geneome 
+# This is done by grouping reads by type (anchorReads / adriftReads) and reference geneome 
 # and using parLapply() to disrubte read chunks across a number of CPUs. Unique reads 
 # are nested and then unnnested after alignment.
 
 
 logMsg(config, 'Starting refGenome alignments.', config$logFile)
 
-config$alignment.chunk.size <- 10000
-config$genomAlignment.CPUs  <- 10
 
 nSample <- 1
-nSamplesToAlign <- n_distinct(df$uniqueSample)
 
-alignments <- bind_rows(lapply(split(df, paste(df$uniqueSample)), function(x){
+alignments <- bind_rows(lapply(split(df, 1:nrow(df)), function(x){
   
   fasta <- readDNAStringSet(file.path(config$outputDir, 'sampleReads', x$file))
   
@@ -496,22 +431,25 @@ alignments <- bind_rows(lapply(split(df, paste(df$uniqueSample)), function(x){
   fasta <- DNAStringSet(d$seq)
   names(fasta) <- d$seqID
   
-  db <- x$refGenomeBLATdb[1]
+  db <- x$refGenome[1]
   cluster <- makeCluster(config$genomAlignment.CPUs)
   clusterExport(cluster, c('config', 'db'), envir = environment())
   
-  logMsg(config, paste0('Aligning unique sample ', nSample, '/', nSamplesToAlign), config$logFile)
+  logMsg(config, paste0('Aligning seq file ', nSample, '/', nrow(df), ' with ', length(fasta), ' reads using ', config$genomAlignment.CPUs, ' cores.'), config$logFile)
   nSample <<- nSample + 1
   
   r <- bind_rows(parLapply(cluster, split(fasta, dplyr::ntile(1:length(fasta), config$genomAlignment.CPUs)), function(y){
+  #r <- bind_rows(lapply(split(fasta, dplyr::ntile(1:length(fasta), config$genomAlignment.CPUs)), function(y){
+      
          library(ShortRead)
          library(tidyverse)
-         source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
+         source(file.path(config$softwareDir, 'AAVengeR2.lib.R'))
+         
          a <- alignReads.BLAT(y, db)
          
          # Apply generic alignment filters.
          if(nrow(a) > 0){
-           a <- dplyr::filter(a, alignmentPercentID >= config$alignment.genome.minPercentID,
+           a <- dplyr::filter(a, alignmentPercentID >= config$alignment.refGenome.minPercentID,
                                  tNumInsert  <= 1, 
                                  qNumInsert  <= 1,
                                  tBaseInsert <= 2,
@@ -522,6 +460,8 @@ alignments <- bind_rows(lapply(split(df, paste(df$uniqueSample)), function(x){
        }))
   
   stopCluster(cluster)
+  
+  if(nrow(r) == 0) return(tibble())
   
   d <- left_join(select(d, -seq), r,  by = c("seqID" = "qName"))
   d <- unnest(d, ids)
@@ -534,40 +474,29 @@ logMsg(config, 'RefGenome alignments completed.', config$logFile)
 
 save(list = ls(all=TRUE), file = file.path(config$outputDir, 'savePoint2.RData'))
 
-# JKE chr16+14665948
-# /home/kevin/projects/wistar/Wistar20201004/output_data/condensed_sites.Wistar20201004.csv
 
 
-
-
+# Create position ids.
 alignments$posid <- paste0(alignments$tName, alignments$strand, ifelse(alignments$strand == '+', alignments$tStart, alignments$tEnd))
 
 
-# Apply direction specific filters.
-virusReads.aln <- alignments[which(alignments$source == 'virusReads'),]
-breakReads.aln <- alignments[which(alignments$source == 'breakReads'),]
+# Segregate alignments.
+anchorReads.aln <- alignments[which(alignments$source == 'anchorReads'),]
+adriftReads.aln <- alignments[which(alignments$source == 'adriftReads'),]
 
 
-# Break point reads have static 5' adapters which are removed with cutadapt.
+# Adrift point reads have static 5' adapters which are removed with cutadapt.
 # Only consider reads which immediately align to the genome.
-breakReads.aln <- filter(breakReads.aln, qStart <= 3, matches >= config$trimmedRead.minLength)
+adriftReads.aln <- filter(adriftReads.aln, qStart <= 3, matches >= config$trimmedRead.minLength)
 
 
 # Virus reads have had over-read sequences removed.
 # Only consider virus reads where the end of the read aligns to the genome.
-virusReads.aln <- filter(virusReads.aln, (qSize - qEnd) <= 3, matches >= config$trimmedRead.minLength)
+anchorReads.aln <- filter(anchorReads.aln, (qSize - qEnd) <= 3, matches >= config$trimmedRead.minLength)
 
 
-# If we are not capturing LTR sequences then a static LTR was removed from viral reads
-# and we can apply a filter to the beginning of the trimmed read.
-# if(! config$virusReads.captureLTRseqs){
-#   logMsg(config, 'Requiring virus reads to begin alignments near their start because the ITR/LTR should of been fully trimmed off.', config$logFile)
-#   virusReads.aln <- filter(virusReads.aln, qStart <= 3)
-# }
-
-
-alignments <- bind_rows(virusReads.aln, breakReads.aln)
-rm(virusReads.aln, breakReads.aln)
+alignments <- bind_rows(anchorReads.aln, adriftReads.aln)
+rm(anchorReads.aln, adriftReads.aln)
 
 
 # Rename alignment column headers by appending read sources.
@@ -579,19 +508,16 @@ alignments <- lapply(split(alignments, alignments$source), function(x){
 
 # Combine read alignments into rows and extract sample names from read ids. 
 
-v <- select(alignments[["virusReads"]][ alignments[["virusReads"]]$ids.virusReads %in% alignments[["breakReads"]]$ids.breakReads,],
-            ids.virusReads, qStart.virusReads, strand.virusReads, tName.virusReads, tStart.virusReads, tEnd.virusReads)
-v$ids.virusReads <- factor(v$ids.virusReads )
+v <- select(alignments[["anchorReads"]][ alignments[["anchorReads"]]$ids.anchorReads %in% alignments[["adriftReads"]]$ids.adriftReads,],
+            ids.anchorReads, qStart.anchorReads, strand.anchorReads, tName.anchorReads, tStart.anchorReads, tEnd.anchorReads)
+v$ids.anchorReads <- factor(v$ids.anchorReads )
 
-b <- select(alignments[["breakReads"]][ alignments[["breakReads"]]$ids.breakReads %in% alignments[["virusReads"]]$ids.virusReads,],
-            ids.breakReads, strand.breakReads, tName.breakReads, tStart.breakReads, tEnd.breakReads)
-b$ids.breakReads <- factor(b$ids.breakReads)
+b <- select(alignments[["adriftReads"]][ alignments[["adriftReads"]]$ids.adriftReads %in% alignments[["anchorReads"]]$ids.anchorReads,],
+            ids.adriftReads, strand.adriftReads, tName.adriftReads, tStart.adriftReads, tEnd.adriftReads)
+b$ids.adriftReads <- factor(b$ids.adriftReads)
 
 rm(alignments)
-
 logMsg(config, 'Starting to create fragments from alignment data.', config$logFile)
-
-### readPerChunk <- 20000
 
 
 # Here we build a table of potential fragments by matching up virus and break point reads
@@ -611,34 +537,34 @@ frags <- bind_rows(parLapply(cluster, split(v, v$s), function(x){
          library(dplyr)
          library(stringr)
   
-         frags <- left_join(x, b, by = c('ids.virusReads' = 'ids.breakReads')) %>% tidyr::drop_na()
+         frags <- left_join(x, b, by = c('ids.anchorReads' = 'ids.adriftReads')) %>% tidyr::drop_na()
        
-         i <- which(frags$tName.virusReads != frags$tName.breakReads)
+         i <- which(frags$tName.anchorReads != frags$tName.adriftReads)
          if(length(i) > 0) frags <- frags[-i,]
          if(nrow(frags) == 0) return(data.frame())
          
-         i <- which(frags$strand.virusReads == frags$strand.breakReads)
+         i <- which(frags$strand.anchorReads == frags$strand.adriftReads)
          if(length(i) > 0) frags <- frags[-i,]
          if(nrow(frags) == 0) return(data.frame())
          
          mutate(frags, 
-                fragStart = ifelse(strand.virusReads == '+', tStart.virusReads + 1, tStart.breakReads + 1),
-                fragEnd   = ifelse(strand.virusReads == '+', tEnd.breakReads + 1,   tEnd.virusReads + 1),
-                fragTest  = ifelse(strand.virusReads == '+', tStart.virusReads < tEnd.breakReads, tStart.breakReads < tEnd.virusReads),  
+                fragStart = ifelse(strand.anchorReads == '+', tStart.anchorReads + 1, tStart.adriftReads + 1),
+                fragEnd   = ifelse(strand.anchorReads == '+', tEnd.adriftReads + 1,   tEnd.anchorReads + 1),
+                fragTest  = ifelse(strand.anchorReads == '+', tStart.anchorReads < tEnd.adriftReads, tStart.adriftReads < tEnd.anchorReads),  
                 fragWidth = (fragEnd - fragStart) + 1) %>%
          filter(fragTest == TRUE, 
                 fragWidth <= config$fragments.maxLength,
                 fragWidth >= config$fragments.minLength) %>%
-         mutate(uniqueSample = unlist(lapply(str_split(ids.virusReads, '\\|'), '[[', 2 )),
-                readID = sub('\\|.+$', '', ids.virusReads)) 
+         mutate(uniqueSample = unlist(lapply(str_split(ids.anchorReads, '\\|'), '[[', 2 )),
+                readID = sub('\\|.+$', '', ids.anchorReads)) 
        }))
 
 stopCluster(cluster)
 
 logMsg(config, 'Initial fragment generation completed.', config$logFile)
 
-frags <- left_join(frags, dplyr::select(samples, refGenomeName, uniqueSample), by = 'uniqueSample')
-frags <- mutate(frags, fragID = paste0(uniqueSample, ';', tName.virusReads, ';', strand.virusReads, ';', fragStart, ';', fragEnd))
+frags <- left_join(frags, dplyr::select(samples, refGenome.id, uniqueSample), by = 'uniqueSample')
+frags <- mutate(frags, fragID = paste0(uniqueSample, ';', tName.anchorReads, ';', strand.anchorReads, ';', fragStart, ';', fragEnd))
 
 
 # Remove read frags which share a random linker id and spand more than one sample.
@@ -647,7 +573,7 @@ if(config$removeReadFragsWithSameRandomID) frags <- removeReadFragsWithSameRando
 
 # Convert read fragments into grouped fragments.
 frags <- group_by(frags, fragID) %>%
-  summarise(reads = n(), refGenomeName = refGenomeName[1], virusReadAlignmentStart = qStart.virusReads[1], readIDs = list(readID)) %>%
+  summarise(reads = n(), refGenome.id = refGenome.id[1], virusReadAlignmentStart = qStart.anchorReads[1], readIDs = list(readID)) %>%
   ungroup() %>%
   separate(fragID, c('uniqueSample', 'seqnames', 'strand', 'start', 'end'), sep = ';') 
 
@@ -735,7 +661,6 @@ save(list = ls(all=TRUE), file = file.path(config$outputDir, 'savePoint3.RData')
 # ltrRepSeq2 is the  representative ITR/LTR sequence with addition NTs found between the recognizable 
 #   ITR/LTR sequence and the start of the alignment to the genome..
 
-config$demultiplexing.CPUs <- 30
 cluster <- makeCluster(config$demultiplexing.CPUs)
 clusterExport(cluster, c('config'))
 
@@ -747,9 +672,13 @@ frags$s <- rep(1:config$demultiplexing.CPUs, ceiling(nrow(frags)/config$demultip
 
 # JKE
 #frags <- bind_rows(parLapply(cluster, split(frags, frags$s), function(a){
+
+# Error: `by` can't contain join column `qName` which is missing from RHS
+
+
 frags <- bind_rows(lapply(split(frags, frags$s), function(a){  
               library(dplyr)
-              source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
+              source(file.path(config$softwareDir, 'AAVengeR2.lib.R'))
     
               logFile <-  file.path(config$outputDir, 'logs', paste0('LTRrep_', a$s[1], '.log'))
              
@@ -770,7 +699,7 @@ frags <- bind_rows(lapply(split(frags, frags$s), function(a){
                 # The returned maxReadPercentDiff metric is the max edit distance between the 
                 # returned representative divided by the number of letters in the representative sequence.
          
-                r <- representativeSeq(ltrs$LTRseq)
+                r <- representativeSeq(ltrs$LTRseq, logFile = logFile)
                 
                 frag$maxReadPercentDiff <- r[[1]]
                 frag$ltrRepSeq <- r[[2]]
@@ -786,7 +715,7 @@ frags <- bind_rows(lapply(split(frags, frags$s), function(a){
                   frag$ltrRepSeq2 <- frag$ltrRepSeq 
                 }else{
                   logMsg(config, paste0('Reprocessing fragment with additional NTs', x, '/', nrow(a), ' with ', frag$reads, ' reads.'), logFile)
-                  r <- representativeSeq(paste0(ltrs$LTRseq, additionalLTRnts))
+                  r <- representativeSeq(paste0(ltrs$LTRseq, additionalLTRnts), logFile = logFile)
                   frag$maxReadPercentDiff2 <- r[[1]]
                   frag$ltrRepSeq2 <- r[[2]]
                 }
@@ -797,9 +726,13 @@ frags <- bind_rows(lapply(split(frags, frags$s), function(a){
   
 stopCluster(cluster)
   
+
+# JKE1
+
+save(list = ls(all=TRUE), file = file.path(config$outputDir, 'savePoint_dev.RData'))
   
 # Remove fragments where there is not a clear concensus remnant. 
-frags <- subset(frags, frags$maxReadPercentDiff2 <= config$LTR_remnant_maxDifference)
+frags <- subset(frags, frags$maxReadPercentDiff2 <= config$fragmentProcessing.rep.maxDifference)
   
 
 # Save the fragments for downstream analyses.
@@ -816,21 +749,21 @@ createFragUCSCTrack(frags, title = 'AAVengeR_fragments', outputFile = file.path(
 sites <- bind_rows(lapply(split(frags, paste(frags$subject, frags$sample, frags$posid, frags$posIDcluster)), function(x){
     if(nrow(x) > 1){
       i <- rep(TRUE, nrow(x))
-      r2 <- representativeSeq(x$ltrRepSeq2)
+      r2 <- representativeSeq(x$ltrRepSeq2, logFile = config$logFile)
       
-      if(r2[[1]] > config$LTR_remnant_maxDifference){
+      if(r2[[1]] > config$fragmentProcessing.rep.maxDifference){
         # There is a conflict, one or more fragments have a markedly different LTR sequence representative then the other fragments.
         # Attempt to salvage this site by retaining the majority of fragments with similiar ITR/LTR sequences.
         
-        i <- as.vector(stringdist::stringdistmatrix(x$ltrRepSeq2, r2[[2]]) / nchar(x$ltrRepSeq2) < config$LTR_remnant_maxDifference)
-        if(sum(i)/nrow(x) >= config$fragmentAssemblyConflictResolution){
+        i <- as.vector(stringdist::stringdistmatrix(x$ltrRepSeq2, r2[[2]]) / nchar(x$ltrRepSeq2) < config$fragmentProcessing.rep.maxDifference)
+        if(sum(i)/nrow(x) >= config$fragmentProcessing.assemblyConflictResolution){
           x <- x[i,]
         } else {
           return(tibble())
         }
       }
       
-      r <- representativeSeq(x$ltrRepSeq)
+      r <- representativeSeq(x$ltrRepSeq, logFile = config$logFile)
       
       return(dplyr::select(x, subject, sample, replicate, uniqueSample, seqnames, start, end, strand, posid, posIDcluster) %>% 
              dplyr::mutate(estAbund = n(), position = ifelse(strand[1] == '+', start[1], end[1]), ltrRepSeq = r[[2]], ltrRepSeq2 = r2[[2]]) %>%

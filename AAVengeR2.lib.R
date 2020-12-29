@@ -32,6 +32,7 @@ unpackUniqueSampleID <- function(d){
 removeReadFragsWithSameRandomID <- function(frags, config){
   logMsg(config, 'Removing read pairs which share random linker IDs between samples.', config$logFile)
   
+  browser()
   randomIDs <- bind_rows(lapply(list.files(file.path(config$outputDir, 'tmp'), 
                                            pattern = 'randomIDs', 
                                            full.names = TRUE), function(x){ load(x); randomIDs }))
@@ -106,7 +107,7 @@ standardizedFragments <- function(frags, config){
 
 
 
-logMsg <- function(config, msg, logFile, append = TRUE){
+logMsg <- function(config, msg, logFile = '~/log', append = TRUE){
   library(lubridate)
   # Create log time elapsed stamp using the start time in the config object, eg.  [15.5 minutes] log message.
   te <- paste0('[', 
@@ -120,7 +121,7 @@ logMsg <- function(config, msg, logFile, append = TRUE){
 
 
 checkConfigFilePaths <- function(files){
-  invisible(sapply(unique(samples$refGenome.id), function(file){ 
+  invisible(sapply(unique(samples$refGenomeBLATdb), function(file){ 
     if(! file.exists(file)){
       logMsg(config, paste0('Error. "', file, '" does not exist.'), config$logFile)
       stop(paste0('Stopping AVVengeR -- "', file, '" not found error.'))
@@ -160,14 +161,14 @@ qualTrimReads <- function(f, chunkSize, label, ouputDir){
   # Create a pointer like object to the read file.
   strm <- FastqStreamer(f, n = as.integer(chunkSize))
   
-  # Extract chunks from file and write out chunks with numeric suffixes, eg. virusReads.5
+  # Extract chunks from file and write out chunks with numeric suffixes, eg. anchorReads.5
   n <- 1
   repeat {
     fq <- yield(strm)
     if(length(fq) == 0) break
     
-    fq <- trimTailw(fq, 2, config$sequence.trim.qualCode, 5)
-    fq <- fq[width(fq) >= config$sequence.trim.minLengthPostTrim]
+    fq <- trimTailw(fq, 2, config$sequence.qualTrim.code, 5)
+    fq <- fq[width(fq) >= config$sequence.qualTrim.minLength]
  
     if(length(fq) > 0) writeFastq(fq, file = file.path(ouputDir, paste0(label, '.', n)), compress = FALSE)
     
@@ -182,7 +183,7 @@ createReadChunks <- function(f, chunkSize, label, ouputDir){
   # Create a pointer like object to the read file.
   strm <- FastqStreamer(f, n = as.integer(chunkSize))
   
-  # Extract chunks from file and write out chunks with numeric suffixes, eg. virusReads.5
+  # Extract chunks from file and write out chunks with numeric suffixes, eg. anchorReads.5
   n <- 1
   repeat {
     fq <- yield(strm)
@@ -204,12 +205,12 @@ shortRead2DNAstringSet <- function(x){
 
 
 
-representativeSeq <- function(s, percentReads = 95){
+representativeSeq <- function(s, percentReads = 95, logFile = '~/log'){
   if(length(s) == 1 | n_distinct(s) == 1) return(list(0, s[1]))
   
-  if(length(s) > config$fragmentProcessing.LTRrep.maxReads){
+  if(length(s) > config$fragmentProcessing.rep.maxReads){
     set.seed(1)
-    s <- sample(s, config$fragmentProcessing.LTRrep.maxReads)
+    s <- sample(s, config$fragmentProcessing.rep.maxReads)
   }
   
   f <- tmpFile()
@@ -301,9 +302,9 @@ captureLTRseqs <- function(reads, seqs){
   b$alignmentLength <- b$qend - b$qstart + 1
   b <- left_join(b, d, by = c('qname' = 'id'))
   
-  b <- subset(b, pident >= config$virusReads.captureLTRseqs.minPercentSeqID & 
-                 qstart <= config$virusReads.captureLTRseqs.maxAlignmentStart & 
-                 gapopen <= config$virusReads.captureLTRseqs.maxGapOpen)
+  b <- subset(b, pident  >= config$anchorReads.identification.minPercentSeqID & 
+                 qstart  <= config$anchorReads.identification.maxAlignmentStart & 
+                 gapopen <= config$anchorReads.identification.maxGapOpen)
   
   if(nrow(b) == 0) return(character(length = 0))
   
@@ -315,11 +316,12 @@ captureLTRseqs <- function(reads, seqs){
   }))
  
  b$id.list <- strsplit(b$id.list, ',')
- b <- unnest(b, id.list)  
+ b <- tidyr::unnest(b, id.list)  
  
  b$LTRseq <- substr(b$read, b$qstart, b$qend)
  
  reads <- reads[names(reads) %in% b$id.list]
+ reads <- reads[match(b$id, names(reads))]
  
  b <- select(b, id.list, sseqid, LTRseq)
  names(b) <- c('id', 'LTRname', 'LTRseq')
@@ -331,10 +333,6 @@ captureLTRseqsLentiHMM <- function(reads, hmm){
   
   # The passed HMM is expected to cover at least 100 NT of the end of the LTR
   # being sequences out of and the HMM is expected to end in CA.
-  
-  #browser()
-  #if(any(c("M03249:101:000000000-JBCKB:1:1101:15828:15238", "M03249:101:000000000-JBCKB:1:1101:23522:16964",
-  #     "M03249:101:000000000-JBCKB:1:1101:20203:16560", "M03249:101:000000000-JBCKB:1:1101:16882:9527") %in% names(reads))) browser()
   
   outputFile <- file.path(config$outputDir, 'tmp', tmpFile())
   writeXStringSet(reads, outputFile)
@@ -364,9 +362,9 @@ captureLTRseqsLentiHMM <- function(reads, hmm){
   
   # Subset HMM results such that alignments start at the start of reads, the end of the HMM
   # which contains the CA is includes and the alignment has a significant alignment scores.
-  o <- subset(o, targetStart <= config$virusReads.captureLTRseqs.HMMmaxStartPos & 
+  o <- subset(o, targetStart <= config$anchorReads.captureLTRseqs.HMMmaxStartPos & 
                  hmmEnd == hmmLength & 
-                 fullEval <= as.numeric(config$virusReads.captureLTRseqs.HMMminEval))
+                 fullEval <= as.numeric(config$anchorReads.captureLTRseqs.HMMminEval))
   if(nrow(o) == 0) return(list())
   
   reads2 <- reads[names(reads) %in% o$targetName]
@@ -490,7 +488,7 @@ trimLeadingSeq <- function(x, seq){
 
 
 # Trim static over read sequences.
-trimOverReadSeq <- function(x, seq, logFile){
+trimOverReadSeq <- function(x, seq, logFile = '~/log'){
   f <- tmpFile()
   
   logFile <- paste0(logFile, '.static.', seq)
@@ -512,7 +510,7 @@ trimOverReadSeq <- function(x, seq, logFile){
 
 
 # Trim dynamic over read sequences.
-trimOverReadSeq2 <- function(reads, o, logFile){
+trimOverReadSeq2 <- function(reads, o, logFile = '~/log'){
   
   if(! all(names(o$reads) == o$LTRs$id)) stop('Read/LTR object is out of order.')
   
@@ -532,12 +530,12 @@ trimOverReadSeq2 <- function(reads, o, logFile){
          cutadptLogFile <- file.path(config$outputDir, 'logs', 'cutadapt', paste0(logFile, '.dynamic.', adapter))
     
          system(paste0(config$command.cutadapt3, ' -f fasta -e 0.30 -a ', adapter, ' --overlap 2 ', 
-                       '--info-file=', cutadptLogFile, ' ',
+                ###      '--info-file=', cutadptLogFile, ' ',
                        file.path(config$outputDir, 'tmp', 'cutadapt', f), ' > ', 
                        file.path(config$outputDir, 'tmp', 'cutadapt', paste0(f, '.out'))),
                        ignore.stderr = TRUE)
     
-         parseCutadaptLog(cutadptLogFile)
+         ### parseCutadaptLog(cutadptLogFile)
     
          s <- Biostrings::readDNAStringSet(file.path(config$outputDir, 'tmp', 'cutadapt', paste0(f, '.out')))
          invisible(file.remove(file.path(config$outputDir, 'tmp', 'cutadapt', f)))
@@ -569,6 +567,8 @@ getVectorReadIDs <- function(reads, config, vectorFile){
     mutate(id = paste0('s', 1:n()),
            qlength = nchar(read))
   
+  # browser()
+  
     f <- tmpFile()
     write(paste0('>', d$id, '\n', d$read), file = file.path(config$outputDir, 'tmp', paste0(f, '.fasta')))
 
@@ -591,7 +591,7 @@ getVectorReadIDs <- function(reads, config, vectorFile){
     b <- left_join(b, d, by = c('qname' = 'id'))
     b$pcoverage <- ((b$qend - b$qstart) / b$qlength)*100
   
-    b <- subset(b, pident >= config$alignment.vector.minPercentID & pcoverage >= config$alignment.vector.minPercentQueryCoverage & gapopen <= 1)
+    b <- subset(b, pident >= config$alignment.seqFilter.minPercentID & pcoverage >= config$alignment.seqFilter.minPercentQueryCoverage & gapopen <= 1)
 
     invisible(file.remove(list.files(file.path(config$outputDir, 'tmp'), pattern = f, full.names = TRUE)))
     unlist(strsplit(b$id.list, ','))
@@ -603,23 +603,23 @@ createFragReadAlignments <- function(config, samples, frags){
   
     f <- list.files(file.path(config$outputDir, 'sampleReads'), pattern = paste0(unique(x$sample), collapse = '|'), full.names = TRUE)
   
-    virusReads <- Reduce('append', lapply(f[grep('virus', f)], readFasta))
-    breakReads <- Reduce('append', lapply(f[grep('break', f)], readFasta))
+    anchorReads <- Reduce('append', lapply(f[grep('anchor', f)], readFasta))
+    adriftReads <- Reduce('append', lapply(f[grep('adrift', f)], readFasta))
   
-    breakReads <- breakReads[as.character(breakReads@id) %in% frags$ids.virusReads]
-    virusReads <- virusReads[as.character(virusReads@id) %in% frags$ids.virusReads]
+    adriftReads <- adriftReads[as.character(adriftReads@id) %in% frags$ids.anchorReads]
+    anchorReads <- anchorReads[as.character(anchorReads@id) %in% frags$ids.anchorReads]
   
-    breakReads@id <- BStringSet(sub('\\|.+$', '', as.character(breakReads@id)))
-    virusReads@id <- BStringSet(sub('\\|.+$', '', as.character(virusReads@id)))
+    adriftReads@id <- BStringSet(sub('\\|.+$', '', as.character(adriftReads@id)))
+    anchorReads@id <- BStringSet(sub('\\|.+$', '', as.character(anchorReads@id)))
   
-    if(! all(as.character(breakReads@id) == as.character(virusReads@id))) stop('Read id mismatch error.')
+    if(! all(as.character(adriftReads@id) == as.character(anchorReads@id))) stop('Read id mismatch error.')
   
-    writeFasta(breakReads, file = file.path(config$outputDir, 'fragReads', paste0(x$subject[1], '.breakReads.fasta')))
-    writeFasta(virusReads, file = file.path(config$outputDir, 'fragReads', paste0(x$subject[1], '.virusReads.fasta')))
+    writeFasta(adriftReads, file = file.path(config$outputDir, 'fragReads', paste0(x$subject[1], '.adriftReads.fasta')))
+    writeFasta(anchorReads, file = file.path(config$outputDir, 'fragReads', paste0(x$subject[1], '.anchorReads.fasta')))
   
     system(paste0(config$command.bwa, ' mem -M ', x$refGenomeBWAdb[1], ' ',
-                  file.path(config$outputDir, 'fragReads', paste0(x$subject[1], '.breakReads.fasta')), ' ',
-                  file.path(config$outputDir, 'fragReads', paste0(x$subject[1], '.virusReads.fasta')), ' > ',
+                  file.path(config$outputDir, 'fragReads', paste0(x$subject[1], '.adriftReads.fasta')), ' ',
+                  file.path(config$outputDir, 'fragReads', paste0(x$subject[1], '.anchorReads.fasta')), ' > ',
                   file.path(config$outputDir, 'fragReads', paste0(x$subject[1], '.sam'))))
   
     system(paste0(config$command.samtools, ' view -S -b ',  
