@@ -33,12 +33,21 @@ removeReadFragsWithSameRandomID <- function(frags, config){
   logMsg(config, 'Removing read pairs which share random linker IDs between samples.', config$logFile)
   
   browser()
+  
   randomIDs <- bind_rows(lapply(list.files(file.path(config$outputDir, 'tmp'), 
                                            pattern = 'randomIDs', 
                                            full.names = TRUE), function(x){ load(x); randomIDs }))
   frags <- left_join(frags, randomIDs, by = 'readID')
   
   frags <- unpackUniqueSampleID(frags)
+  
+  
+  z <- unlist(lapply(split(frags, frags$randomSeqID), function(x){
+    browser()
+   # if(n_distinct(x$uniqueSample) > 1) browser()
+    n_distinct(x$uniqueSample)
+  }))
+  
   
   frags <- group_by(frags, randomSeqID) %>%
     mutate(samplesPerRandomSeqID = n_distinct(sample)) %>%
@@ -60,7 +69,7 @@ standardizedFragments <- function(frags, config){
   g <- makeGRangesFromDataFrame(frags, keep.extra.columns = TRUE)
   g$s <- standardizationSplitVector(g, config$standardizeSitesBy)
   g <- unlist(GRangesList(parLapply(cluster, split(g, g$s), function(x){
-         source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
+         source(file.path(config$softwareDir, 'AAVengeR2.lib.R'))
          x$intSiteRefined <- FALSE
          out <- tryCatch({
                            o <- gintools::standardize_sites(x)
@@ -80,7 +89,7 @@ standardizedFragments <- function(frags, config){
 
   g$s <- standardizationSplitVector(g, config$standardizeBreakPointsBy)
   g <- unlist(GRangesList(parLapply(cluster, split(g, g$s), function(x){
-         source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
+         source(file.path(config$softwareDir, 'AAVengeR2.lib.R'))
          x$breakPointRefined <- FALSE
          out <- tryCatch({
                             o <- gintools::refine_breakpoints(x, counts.col = 'reads')
@@ -294,8 +303,10 @@ captureLTRseqs <- function(reads, seqs){
   
   waitForFile(file.path(config$outputDir, 'tmp', paste0(f, '.blast')), seconds = 1)
   
-  
-  if(file.info(file.path(config$outputDir, 'tmp', paste0(f, '.blast')))$size == 0) return(character(length = 0))
+  if(file.info(file.path(config$outputDir, 'tmp', paste0(f, '.blast')))$size == 0){
+    invisible(file.remove(list.files(file.path(config$outputDir, 'tmp'), pattern = f, full.names = TRUE)))  
+    return(character(length = 0))
+  }
   
   b <- read.table(file.path(config$outputDir, 'tmp', paste0(f, '.blast')), sep = '\t', header = FALSE)
   names(b) <- c('qname', 'sseqid', 'pident', 'length', 'mismatch', 'gapopen', 'qstart', 'qend', 'sstart', 'send', 'evalue', 'bitscore')
@@ -306,10 +317,13 @@ captureLTRseqs <- function(reads, seqs){
                  qstart  <= config$anchorReads.identification.maxAlignmentStart & 
                  gapopen <= config$anchorReads.identification.maxGapOpen)
   
-  if(nrow(b) == 0) return(character(length = 0))
+  if(nrow(b) == 0){
+    invisible(file.remove(list.files(file.path(config$outputDir, 'tmp'), pattern = f, full.names = TRUE)))
+    return(character(length = 0))
+  }
   
   # For each read alignment, find the longest alignment and use the ordering of the LTR sequences as a tie breaker.
- b <- bind_rows(lapply(split(b, b$read), function(x){
+  b <- bind_rows(lapply(split(b, b$read), function(x){
     x <- subset(x, alignmentLength ==  max(x$alignmentLength))
     x$n <- match(x$sseqid, seqsNames)
     arrange(x, n) %>% slice(1)
@@ -325,6 +339,8 @@ captureLTRseqs <- function(reads, seqs){
  
  b <- select(b, id.list, sseqid, LTRseq)
  names(b) <- c('id', 'LTRname', 'LTRseq')
+ 
+ invisible(file.remove(list.files(file.path(config$outputDir, 'tmp'), pattern = f, full.names = TRUE)))
  
  return(list(reads = reads, LTRs = b))
 }
@@ -492,19 +508,19 @@ trimOverReadSeq <- function(x, seq, logFile = '~/log'){
   f <- tmpFile()
   
   logFile <- paste0(logFile, '.static.', seq)
-  writeFasta(x,  file = file.path(config$outputDir, 'tmp', 'cutadapt', f))
+  writeFasta(x,  file = file.path(config$outputDir, 'logs', 'cutadapt', f))
   
   system(paste0(config$command.cutadapt3, ' -f fasta  -e 0.15 -a ', seq, ' --overlap 2 ', 
                 '--info-file=', file.path(config$outputDir, 'logs', 'cutadapt', logFile), ' ',
-                file.path(config$outputDir, 'tmp', 'cutadapt', f), ' > ', 
-                file.path(config$outputDir, 'tmp', 'cutadapt', paste0(f, '.out'))),
+                file.path(config$outputDir, 'logs', 'cutadapt', f), ' > ', 
+                file.path(config$outputDir, 'logs', 'cutadapt', paste0(f, '.out'))),
          ignore.stderr = TRUE)
   
   parseCutadaptLog(file.path(config$outputDir, 'logs', 'cutadapt', logFile))
   
-  x <- Biostrings::readDNAStringSet(file.path(config$outputDir, 'tmp', 'cutadapt', paste0(f, '.out')))
-  file.remove(file.path(config$outputDir, 'tmp', 'cutadapt', f))
-  file.remove(file.path(config$outputDir, 'tmp', 'cutadapt', paste0(f, '.out')))
+  x <- Biostrings::readDNAStringSet(file.path(config$outputDir, 'logs', 'cutadapt', paste0(f, '.out')))
+  file.remove(file.path(config$outputDir, 'logs', 'cutadapt', f))
+  file.remove(file.path(config$outputDir, 'logs', 'cutadapt', paste0(f, '.out')))
   x
 }
 
@@ -512,10 +528,8 @@ trimOverReadSeq <- function(x, seq, logFile = '~/log'){
 # Trim dynamic over read sequences.
 trimOverReadSeq2 <- function(reads, o, logFile = '~/log'){
   
-  if(! all(names(o$reads) == o$LTRs$id)) stop('Read/LTR object is out of order.')
-  
   # Create adapter sequences (RC of last 12 NT of LTRs) for cutadapt to remove.
-  o$LTRs$LTRseqAdapter <- Biostrings::DNAStringSet(substr(o$LTRs$LTRseq, nchar(o$LTRs$LTRseq)-12, nchar(o$LTRs$LTRseq)))
+  o$LTRs$LTRseqAdapter <- Biostrings::DNAStringSet(substr(o$LTRs$LTRseq, nchar(o$LTRs$LTRseq) - config$anchorReads.identification.minLength, nchar(o$LTRs$LTRseq)))
   o$LTRs$LTRseqAdapter <- as.character(Biostrings::reverseComplement(o$LTRs$LTRseqAdapter))
   
   o$LTRs <- o$LTRs[match(names(reads), o$LTRs$id),]
@@ -526,20 +540,20 @@ trimOverReadSeq2 <- function(reads, o, logFile = '~/log'){
   Reduce('append', lapply(split(reads, o$LTRs$LTRseqAdapter), function(x){
          adapter <- as.character(mcols(x)$adapter)[1]
          f <- tmpFile()
-         Biostrings::writeXStringSet(x, file = file.path(config$outputDir, 'tmp', 'cutadapt', f))
+         Biostrings::writeXStringSet(x, file = file.path(config$outputDir, 'logs', 'cutadapt', f))
          cutadptLogFile <- file.path(config$outputDir, 'logs', 'cutadapt', paste0(logFile, '.dynamic.', adapter))
     
          system(paste0(config$command.cutadapt3, ' -f fasta -e 0.30 -a ', adapter, ' --overlap 2 ', 
-                ###      '--info-file=', cutadptLogFile, ' ',
-                       file.path(config$outputDir, 'tmp', 'cutadapt', f), ' > ', 
-                       file.path(config$outputDir, 'tmp', 'cutadapt', paste0(f, '.out'))),
+                      '--info-file=', cutadptLogFile, ' ',
+                       file.path(config$outputDir, 'logs', 'cutadapt', f), ' > ', 
+                       file.path(config$outputDir, 'logs', 'cutadapt', paste0(f, '.out'))),
                        ignore.stderr = TRUE)
     
-         ### parseCutadaptLog(cutadptLogFile)
+          parseCutadaptLog(cutadptLogFile)
     
-         s <- Biostrings::readDNAStringSet(file.path(config$outputDir, 'tmp', 'cutadapt', paste0(f, '.out')))
-         invisible(file.remove(file.path(config$outputDir, 'tmp', 'cutadapt', f)))
-         invisible(file.remove(file.path(config$outputDir, 'tmp', 'cutadapt', paste0(f, '.out'))))
+         s <- Biostrings::readDNAStringSet(file.path(config$outputDir, 'logs', 'cutadapt', paste0(f, '.out')))
+         invisible(file.remove(file.path(config$outputDir, 'logs', 'cutadapt', f)))
+         invisible(file.remove(file.path(config$outputDir, 'logs', 'cutadapt', paste0(f, '.out'))))
          s
       }))
 }
@@ -566,8 +580,6 @@ getVectorReadIDs <- function(reads, config, vectorFile){
     ungroup() %>%
     mutate(id = paste0('s', 1:n()),
            qlength = nchar(read))
-  
-  # browser()
   
     f <- tmpFile()
     write(paste0('>', d$id, '\n', d$read), file = file.path(config$outputDir, 'tmp', paste0(f, '.fasta')))

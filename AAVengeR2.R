@@ -25,6 +25,9 @@ source(file.path(config$softwareDir, 'AAVengeR2.lib.R'))
 config$startTime <- ymd_hms(format(Sys.time(), "%y-%m-%d %H:%M:%S"))
 
 
+# config tests
+# config$anchorReads.startTest.maxMismatch  config$anchorReads.startTest.length
+
 # Prepare run session.
 if(dir.exists(config$outputDir)) stop('Error -- output directory already exists.')
 dir.create(config$outputDir)
@@ -146,8 +149,8 @@ if(! dir.exists(file.path(config$outputDir, 'logs', 'cutadapt'))) dir.create(fil
 if(! dir.exists(file.path(config$outputDir, 'tmp', 'cutadapt'))) dir.create(file.path(config$outputDir, 'tmp', 'cutadapt'))
 
 
-invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks'), full.names = TRUE), function(f){
-#invisible(lapply(list.files(file.path(config$outputDir, 'seqChunks'), full.names = TRUE), function(f){
+#invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks'), full.names = TRUE), function(f){
+invisible(lapply(list.files(file.path(config$outputDir, 'seqChunks'), full.names = TRUE), function(f){
   library(ShortRead)
   library(tidyverse)
   source(file.path(config$softwareDir, 'AAVengeR2.lib.R'))
@@ -167,6 +170,7 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
     v1 <- vcountPattern(r$index1.seq, index1Reads, max.mismatch = config$index1Reads.maxMismatch) > 0
     logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', sum(v1), ' reads pass barcode filter.'), logFile)
     
+    log.report <- tibble(sample = r$uniqueSample, demultiplexedIndex1Reads = sum(v1))
     
     # Create break read linker barcode demultiplexing vector.
     v2 <- rep(TRUE, length(adriftReads))
@@ -174,16 +178,23 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
       testSeq <- substr(r$adriftRead.linker.seq, r$adriftRead.linkerBarcode.start, r$adriftRead.linkerBarcode.end)
       v2 <- vcountPattern(testSeq, subseq(adriftReads, r$adriftRead.linkerBarcode.start, r$adriftRead.linkerBarcode.end), max.mismatch = config$adriftReads.linkerBarcode.maxMismatch) > 0
       logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', sum(v2), ' reads pass linker code filter.'), logFile)
+      log.report$demultiplexedLinkerReads <- sum(v2)
+    } else {
+      log.report$demultiplexedLinkerReads <- NA
     }
+    
     
     # Test to see if any reads demultiplex to this row of the sample table and then subset reads to this sample.
     i <- base::intersect(which(v1), which(v2))
     if(length(i) == 0){
       logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') No reads demultiplexed.'), logFile)
+      log.report$demultiplexedReads <- 0
+      write.table(log.report, sep = '\t', col.names = TRUE, row.names = FALSE, quote = FALSE, file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.', chunk.n, '.logReport')))
       return()
     } else {
       reads <- syncReads(index1Reads[i], anchorReads[i], adriftReads[i])
       index1Reads <- reads[[1]];  anchorReads  <- reads[[2]]; adriftReads  <- reads[[3]]
+      log.report$demultiplexedReads <- length(index1Reads)
     }
     
     # Test the start of anchor reads (static or blast search options only)
@@ -196,10 +207,14 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
       }))
       
       logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', sum(!v1), ' reads removed by virus read start test filter (', config$anchorReads.startTest.length, ' NTs).'), logFile)
+      log.report$readsPassingAnchorStartTest <- sum(v1)
+    } else {
+      log.report$readsPassingAnchorStartTest <- NA
     }
     
     if(! any(v1)){
       logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', sum(!v1), ' All reads removed by virus read start test filter.'), logFile)
+      write.table(log.report, sep = '\t', col.names = TRUE, row.names = FALSE, quote = FALSE, file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.', chunk.n, '.logReport')))
       return()
     }
 
@@ -215,35 +230,35 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
       stop('Error - No LTR capture method provided.')
     }
     
+    
+    
     # Here we require all ITR / LTR remnants to be at least config$anchorReads.identification.minLength NTs because we will use them as adaptor sequences for cutadapt 
     if(! all(names(o$reads) == o$LTRs$id)) stop('LTRseq capture error.')
     i <- nchar(o$LTRs$LTRseq) >= config$anchorReads.identification.minLength
     
+    log.report$capturedLeaderSeqs <- sum(i)
+    
     if(sum(i) == 0){
       logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') No anchor reads returned a start sequence >= ', config$anchorReads.identification.minLength, ' NTs'))
+      write.table(log.report, sep = '\t', col.names = TRUE, row.names = FALSE, quote = FALSE, file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.', chunk.n, '.logReport')))
       return()
     }
     
+    # Subset captured ITR / LTR sequences to only include those which met or exceeded the min. length.
     o$reads <- o$reads[i]
     o$LTRs  <- o$LTRs[i,]
+
+    logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', length(o$reads), ' reads remaining after LTR/ITR capture.'), logFile)
+    
+    # Limit anchor reads to those with valid ITR / LTR sequences and sync with other reads.
+    anchorReads  <- anchorReads[names(anchorReads) %in% names(o$reads)]
+    reads <- syncReads(index1Reads, anchorReads, adriftReads)
+    index1Reads <- reads[[1]];  anchorReads  <- reads[[2]]; adriftReads  <- reads[[3]]
     
     
-    if(length(o$reads) == 0){
-      logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') No reads returned from LTR/ITR capture.'), logFile)
-      return()
-    } else {
-      logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', length(o$reads), ' reads remaining after LTR/ITR capture.'), logFile)
-    
-      # Here we limit the reads to those with ITRs/LTRs > 12 NT (defined in o)
-      anchorReads  <- anchorReads[names(anchorReads) %in% names(o$reads)]
-      reads <- syncReads(index1Reads, anchorReads, adriftReads)
-      index1Reads <- reads[[1]];  anchorReads  <- reads[[2]]; adriftReads  <- reads[[3]]
-    }
-    
-    # Create the over read sequence from the concensus of the break read common linker and thelast 12 NTs 
-    # of the captured virus reads ITR / LTR sequences. 
+    # Create the anchor read over-read sequences from sampling the linker sequences of the adrift reads.
   
-    anchorReadOverReadSeq <- substr(r$adriftRead.linker.seq, nchar(r$adriftRead.linker.seq)-config$anchorReads.identification.minLength, nchar(r$adriftRead.linker.seq))
+    anchorReadOverReadSeq <- substr(r$adriftRead.linker.seq, nchar(r$adriftRead.linker.seq) - config$anchorReads.identification.minLength, nchar(r$adriftRead.linker.seq))
     anchorReadOverReadSeq <- Biostrings::DNAString(anchorReadOverReadSeq)
     anchorReadOverReadSeq <- as.character(Biostrings::reverseComplement(anchorReadOverReadSeq))
     
@@ -260,11 +275,17 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
     v1 <- width(anchorReads) - nchar(o$LTRs[match(names(anchorReads), o$LTRs$id),]$LTRseq) >= config$trimmedRead.minLength
     v2 <- width(adriftReads) - nchar(r$adriftRead.linker.seq) >= config$trimmedRead.minLength
     
+    log.report$anchorReadsPostOverReadTrim <- sum(v1)
+    log.report$adriftReadsPostOverReadTrim <- sum(v2)
+    
     reads <- syncReads(index1Reads, anchorReads[v1], adriftReads[v2])
     index1Reads <- reads[[1]];  anchorReads  <- reads[[2]]; adriftReads  <- reads[[3]]
     
+    log.report$readPairsPostOverReadTrim <- length(index1Reads)
+    
     if(length(anchorReads) == 0){
       logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') No reads remaining after over-read trimming and length check.'), logFile)
+      write.table(log.report, sep = '\t', col.names = TRUE, row.names = FALSE, quote = FALSE, file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.', chunk.n, '.logReport')))
       return()
     }
     
@@ -298,12 +319,17 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
       reads <- syncReads(index1Reads, anchorReads, adriftReads)
       index1Reads <- reads[[1]];  anchorReads  <- reads[[2]]; adriftReads  <- reads[[3]]
       
+      log.report$anchorReadsPostVectorFilter <- length(anchorReads)
+      
       if(length(anchorReads) == 0){
         logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') No reads remaining after vector read removal and read synchronization.'), logFile)
+        write.table(log.report, sep = '\t', col.names = TRUE, row.names = FALSE, quote = FALSE, file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.', chunk.n, '.logReport')))
         return()
       } else {
         logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') ', length(anchorReads), ' reads remain after removing vector aligned reads and synchronizing.'), logFile)
       }
+    } else {
+      log.report$anchorReadsPostVectorFilter <- NA
     }
     
     # Sync the LTR capture objects with the current read list.
@@ -325,17 +351,20 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
     anchorReads <- o$reads
     reads <- syncReads(index1Reads, anchorReads, adriftReads)
     index1Reads <- reads[[1]];  anchorReads  <- reads[[2]]; adriftReads  <- reads[[3]]
+    
+    log.report$anchorReadsPostLeaderSeqFilter <- length(anchorReads)
       
     if(length(anchorReads) == 0){
-      logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') No reads remaining after LTR capture and trimming.'), logFile)
+      logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') No reads remaining after leader sequence capture and trimming.'), logFile)
+      write.table(log.report, sep = '\t', col.names = TRUE, row.names = FALSE, quote = FALSE, file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.', chunk.n, '.logReport')))
       return()
     }
 
     
     # Capture random ids.
     randomIDs <- data.frame()
-    if('breakReadLinkerBarcode.start' %in% names(r) & 'breakReadLinkerBarcode.end' %in% names(r)){
-      randomIDs <- as.character(subseq(adriftReads, r$adriftRead.linkerRandomID.start, r$adriftRead.linkerRandomID.end))
+    if('adriftRead.linkerBarcode.start' %in% names(r) & 'adriftRead.linkerBarcode.end' %in% names(r)){
+      randomIDs <- as.character(subseq(adriftReads, r$adriftRead.linkerBarcode.start, r$adriftRead.linkerBarcode.end))
       randomIDs <- data.frame(randomSeqID = unname(randomIDs), readID = names(randomIDs))
       logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') captured random linker ids.'), logFile)
     }
@@ -347,8 +376,11 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
     reads <- syncReads(index1Reads, anchorReads, adriftReads)
     index1Reads <- reads[[1]];  anchorReads  <- reads[[2]]; adriftReads  <- reads[[3]]
     
+    log.report$adriftReadsPostLinkerSeqRemoval <- length(adriftReads)
+    
     if(length(anchorReads) == 0){
       logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') No reads remaining after second read size filter.'), logFile)
+      write.table(log.report, sep = '\t', col.names = TRUE, row.names = FALSE, quote = FALSE, file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.', chunk.n, '.logReport')))
       return()
     } 
     
@@ -360,6 +392,8 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
     writeFasta(adriftReads,  file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.adriftReads.', chunk.n, '.fasta')))
     writeFasta(anchorReads,  file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.anchorReads.', chunk.n, '.fasta')))
     
+    write.table(log.report, sep = '\t', col.names = TRUE, row.names = FALSE, quote = FALSE, file = file.path(config$outputDir, 'tmp', paste0(r$uniqueSample, '.', chunk.n, '.logReport')))
+    
     logMsg(config, paste0('Chunk ', chunk.n, ': (', r$uniqueSample, ') completed with ', length(anchorReads), ' reads.'), logFile)
   }))
   
@@ -368,6 +402,27 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
 
 stopCluster(cluster)
 
+
+# Collect all the logs from the different computational nodes and create a single report.
+logReport <- bind_rows(lapply(list.files(file.path(config$outputDir, 'tmp'), pattern = '*.logReport$', full.names = TRUE), function(f){
+  read.table(f, header = TRUE, sep = '\t')
+}))
+
+logReport <- bind_rows(lapply(split(logReport, logReport$sample), function(x){
+  o <- data.frame(lapply(2:length(x), function(y){
+         if(all(is.na(x[,y]))){
+           return(NA)
+         } else {
+           return(sum(x[,y], na.rm = TRUE))
+         }
+       }))
+  
+  names(o) <- names(x)[2:length(x)]
+  bind_cols(data.frame(sample = x[1,1]), o)
+}))
+
+logMsg(config, 'Summary of read attrition from all computational nodes.\n\n', file.path(config$outputDir, 'logs', 'log'))
+write.table(logReport, sep = '\t', col.names = TRUE, row.names = FALSE, quote = FALSE, file = file.path(config$outputDir, 'logs', 'log'), append = TRUE)
 
 
 # Collate demultiplexed reads using file name snibets.
@@ -470,7 +525,7 @@ alignments <- bind_rows(lapply(split(df, 1:nrow(df)), function(x){
   select(d, -seqID)
 }))
 
-logMsg(config, 'RefGenome alignments completed.', config$logFile)
+logMsg(config, 'Reference genome alignments completed.', config$logFile)
 
 save(list = ls(all=TRUE), file = file.path(config$outputDir, 'savePoint2.RData'))
 
@@ -489,11 +544,19 @@ adriftReads.aln <- alignments[which(alignments$source == 'adriftReads'),]
 # Only consider reads which immediately align to the genome.
 adriftReads.aln <- filter(adriftReads.aln, qStart <= 3, matches >= config$trimmedRead.minLength)
 
+if(nrow(adriftReads.aln) == 0){
+  logMsg(config, 'Error -- no adrift read alignments remain after applying filters.', config$logFile)
+  stop()
+}
 
 # Virus reads have had over-read sequences removed.
 # Only consider virus reads where the end of the read aligns to the genome.
 anchorReads.aln <- filter(anchorReads.aln, (qSize - qEnd) <= 3, matches >= config$trimmedRead.minLength)
 
+if(nrow(anchorReads.aln) == 0){
+  logMsg(config, 'Error -- no anchor read alignments remain after applying filters.', config$logFile)
+  stop()
+}
 
 alignments <- bind_rows(anchorReads.aln, adriftReads.aln)
 rm(anchorReads.aln, adriftReads.aln)
@@ -567,10 +630,6 @@ frags <- left_join(frags, dplyr::select(samples, refGenome.id, uniqueSample), by
 frags <- mutate(frags, fragID = paste0(uniqueSample, ';', tName.anchorReads, ';', strand.anchorReads, ';', fragStart, ';', fragEnd))
 
 
-# Remove read frags which share a random linker id and spand more than one sample.
-if(config$removeReadFragsWithSameRandomID) frags <- removeReadFragsWithSameRandomID(frags, config)
-
-
 # Convert read fragments into grouped fragments.
 frags <- group_by(frags, fragID) %>%
   summarise(reads = n(), refGenome.id = refGenome.id[1], virusReadAlignmentStart = qStart.anchorReads[1], readIDs = list(readID)) %>%
@@ -583,6 +642,10 @@ frags <- unpackUniqueSampleID(frags)
 
 # Standardize fragment boundaries.
 frags <- standardizedFragments(frags, config)
+
+
+# Remove read frags which share a random linker id and spand more than one sample.
+if(config$removeReadFragsWithSameRandomID) frags <- removeReadFragsWithSameRandomID(frags, config)
 
 
 # Now that the boundaries have been standardized, identical fragments need to be merged.
