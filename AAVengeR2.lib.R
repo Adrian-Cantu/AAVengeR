@@ -37,26 +37,16 @@ removeReadFragsWithSameRandomID <- function(frags, config){
   randomIDs <- bind_rows(lapply(list.files(file.path(config$outputDir, 'tmp'), 
                                            pattern = 'randomIDs', 
                                            full.names = TRUE), function(x){ load(x); randomIDs }))
-  frags <- left_join(frags, randomIDs, by = 'readID')
   
-  frags <- unpackUniqueSampleID(frags)
-  
-  
-  z <- unlist(lapply(split(frags, frags$randomSeqID), function(x){
-    browser()
-   # if(n_distinct(x$uniqueSample) > 1) browser()
-    n_distinct(x$uniqueSample)
-  }))
+  o <- left_join(unnest(frags, readIDs), randomIDs, by = c('readIDs' = 'readID')) %>%
+       #mutate(fragID = paste(subject, sample, strand, start, end)) %>% 
+       group_by(randomSeqID) %>%
+       mutate(pass = ifelse(n_distinct(paste(subject, sample)) > 1, FALSE, TRUE)) %>%
+       ungroup() %>%
+       dplyr::select(-fragID)
   
   
-  frags <- group_by(frags, randomSeqID) %>%
-    mutate(samplesPerRandomSeqID = n_distinct(sample)) %>%
-    ungroup()
-  
-  percentReadsRemoved <- sprintf("%.2f%%", (nrow(subset(frags, samplesPerRandomSeqID > 1)) / nrow(frags))*100) 
-  logMsg(config, paste0('Removed ', percentReadsRemoved, ' of fragment reads because one or more other reads shared the same random linker sequence.'), config$logFile)
-  
-  subset(frags, samplesPerRandomSeqID == 1)
+   return(frags)
 }
 
 
