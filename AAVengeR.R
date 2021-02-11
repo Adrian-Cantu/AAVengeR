@@ -15,12 +15,10 @@ options(stringsAsFactors = FALSE)
 #configFile <- commandArgs(trailingOnly = TRUE)
 #if(! file.exists(configFile)) stop('Error -- configuration file not found.')
 #config  <- read_yaml(configFile)
-#source(file.path(config$softwareDir, 'AAVengeR2.lib.R'))
+#source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
 
-config <- read_yaml('/home/everett/projects/AAVengeR_runs/configs/config.Sabatino.yml3')
-#config <- read_yaml('/home/everett/projects/AAVengeR_runs/configs/config.Sabatino.yml')
-#config <- read_yaml('/home/everett/SparkAAV/AAVengeR/configs/config.vector.yml')
-source(file.path(config$softwareDir, 'AAVengeR2.lib.R'))
+config <- read_yaml('/home/everett/projects/AAVengeR_runs/configs/LINE1.yml')
+source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
 
 config$startTime <- ymd_hms(format(Sys.time(), "%y-%m-%d %H:%M:%S"))
 
@@ -76,7 +74,7 @@ invisible(parLapply(cluster,
                          c(config$anchorReadsFile,  config$sequence.chunk.size, 'anchorReads',  file.path(config$outputDir, 'seqChunks'))), 
                  function(x){
                    library(ShortRead)
-                   source(file.path(config$softwareDir, 'AAVengeR2.lib.R'))
+                   source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
                    qualTrimReads(x[[1]], x[[2]], x[[3]], x[[4]])
                 }))
 
@@ -91,7 +89,7 @@ system(paste('rm',  file.path(config$outputDir, 'seqChunks', '*')))
 logMsg(config, 'Converting index reads to DNA strings.', config$logFile)
 index1Reads <- readFastq(config$index1ReadsFile)
 index1Reads <- Reduce('append', parLapply(cluster, split(index1Reads, ntile(1:length(index1Reads), config$demultiplexing.CPUs)), 
-               function(x){source(file.path(config$softwareDir, 'AAVengeR2.lib.R')); shortRead2DNAstringSet(x)}))
+               function(x){source(file.path(config$softwareDir, 'AAVengeR.lib.R')); shortRead2DNAstringSet(x)}))
 
 if(config$correctGolayIndexReads){
   logMsg(config, 'Correcting golay bar code reads.', config$logFile)
@@ -101,12 +99,12 @@ if(config$correctGolayIndexReads){
 logMsg(config, 'Converting anchor reads to DNA strings.', config$logFile)
 anchorReads <- readFastq(file.path(config$outputDir, 'trimmedAnchorReads.fastq'))
 anchorReads <- Reduce('append', parLapply(cluster, split(anchorReads, ntile(1:length(anchorReads), config$demultiplexing.CPUs)), 
-                                          function(x){source(file.path(config$softwareDir, 'AAVengeR2.lib.R')); shortRead2DNAstringSet(x)}))
+                                          function(x){source(file.path(config$softwareDir, 'AAVengeR.lib.R')); shortRead2DNAstringSet(x)}))
 
 logMsg(config, 'Converting break reads to DNA strings.', config$logFile)
 adriftReads <- readFastq(file.path(config$outputDir, 'trimmedAdriftReads.fastq'))
 adriftReads <- Reduce('append', parLapply(cluster, split(adriftReads, ntile(1:length(adriftReads), config$demultiplexing.CPUs)), 
-                                          function(x){source(file.path(config$softwareDir, 'AAVengeR2.lib.R')); shortRead2DNAstringSet(x)}))
+                                          function(x){source(file.path(config$softwareDir, 'AAVengeR.lib.R')); shortRead2DNAstringSet(x)}))
 
 invisible(file.remove(file.path(config$outputDir, 'trimmedAnchorReads.fastq')))
 invisible(file.remove(file.path(config$outputDir, 'trimmedAdriftReads.fastq')))
@@ -150,7 +148,7 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
 #invisible(lapply(list.files(file.path(config$outputDir, 'seqChunks'), full.names = TRUE), function(f){
   library(ShortRead)
   library(tidyverse)
-  source(file.path(config$softwareDir, 'AAVengeR2.lib.R'))
+  source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
   
   load(f)
   
@@ -497,7 +495,7 @@ frags <- bind_rows(lapply(split(df, df$uniqueSample), function(x){
          r <- bind_rows(parLapply(cluster, split(fasta, dplyr::ntile(1:length(fasta), config$genomAlignment.CPUs)), function(y){
                 library(ShortRead)
                 library(tidyverse)
-                source(file.path(config$softwareDir, 'AAVengeR2.lib.R'))
+                source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
       
                 a <- alignReads.BLAT(y, db)
       
@@ -708,7 +706,7 @@ frags$s <- rep(1:config$demultiplexing.CPUs, ceiling(nrow(frags)/config$demultip
 #frags <- bind_rows(lapply(split(frags, frags$s), function(a){  
 frags <- bind_rows(parLapply(cluster, split(frags, frags$s), function(a){  
               library(dplyr)
-              source(file.path(config$softwareDir, 'AAVengeR2.lib.R'))
+              source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
     
               logFile <-  file.path(config$outputDir, 'logs', paste0('LTRrep_', a$s[1], '.log'))
              
@@ -835,22 +833,39 @@ saveRDS(sites, file = file.path(config$outputDir, 'sites.rds'))
 
 #---
 
-o <- file.path(config$outputDir, 'sites.rds')
-o <- o[! o$posid %in% subset(o, seqnames == 'chrX' & position >= 122897024 & position <= 123043178),]
 
-sites <- sites[! sites$posid %in% subset(sites, seqnames == 'chrX' & position >= 122897024 & position <= 123043178)$posid,]
-
-in_sites_not_in_o <- sites[! sites$posid %in% o$posid,]
-in_o_not_in_sites <- o[! o$posid %in% sites$posid,]
-
-
-
-#---
-
-d <- dplyr::mutate(sites, start = position, end = position, siteLabel = paste0(subject, '_', sample, '_', estAbund)) %>%
-     dplyr::filter(seqnames != 'chrUn')
-createIntUCSCTrack(d, siteLabel = 'siteLabel', outputFile = file.path(config$outputDir, 'sites.ucsc'))
-
-system(paste0('cat ', file.path(config$outputDir, 'sites.ucsc'), ' ', file.path(config$outputDir, 'fragments.ucsc'), ' > ',file.path(config$outputDir, 'AAVengeR.ucsc')))
-
-logMsg(config, 'done.', config$logFile)
+# sites$refGenome <- 'mm9'
+# sites$start <- sites$position
+# sites$end <- sites$position
+# 
+# s <- GenomicRanges::makeGRangesFromDataFrame(data.frame(sites), keep.extra.columns = TRUE)
+# s <- gt23::annotateIntSites(s)
+# s <- data.frame(s)
+# s$start <- NULL
+# s$end <- NULL
+# s$width <- NULL
+# s$fragmentsRemoved <- NULL
+# 
+# 
+# s <- gt23::collapseReplicatesCalcAbunds(sites) %>%
+#      gt23::annotateIntSites()
+# 
+# o <- file.path(config$outputDir, 'sites.rds')
+# o <- o[! o$posid %in% subset(o, seqnames == 'chrX' & position >= 122897024 & position <= 123043178),]
+# 
+# sites <- sites[! sites$posid %in% subset(sites, seqnames == 'chrX' & position >= 122897024 & position <= 123043178)$posid,]
+# 
+# in_sites_not_in_o <- sites[! sites$posid %in% o$posid,]
+# in_o_not_in_sites <- o[! o$posid %in% sites$posid,]
+# 
+# 
+# 
+# #---
+# 
+# d <- dplyr::mutate(sites, start = position, end = position, siteLabel = paste0(subject, '_', sample, '_', estAbund)) %>%
+#      dplyr::filter(seqnames != 'chrUn')
+# createIntUCSCTrack(d, siteLabel = 'siteLabel', outputFile = file.path(config$outputDir, 'sites.ucsc'))
+# 
+# system(paste0('cat ', file.path(config$outputDir, 'sites.ucsc'), ' ', file.path(config$outputDir, 'fragments.ucsc'), ' > ',file.path(config$outputDir, 'AAVengeR.ucsc')))
+# 
+# logMsg(config, 'done.', config$logFile)

@@ -59,7 +59,7 @@ standardizedFragments <- function(frags, config){
   g <- makeGRangesFromDataFrame(frags, keep.extra.columns = TRUE)
   g$s <- standardizationSplitVector(g, config$standardizeSitesBy)
   g <- unlist(GRangesList(parLapply(cluster, split(g, g$s), function(x){
-         source(file.path(config$softwareDir, 'AAVengeR2.lib.R'))
+         source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
          x$intSiteRefined <- FALSE
          out <- tryCatch({
                            o <- gintools::standardize_sites(x)
@@ -79,7 +79,7 @@ standardizedFragments <- function(frags, config){
 
   g$s <- standardizationSplitVector(g, config$standardizeBreakPointsBy)
   g <- unlist(GRangesList(parLapply(cluster, split(g, g$s), function(x){
-         source(file.path(config$softwareDir, 'AAVengeR2.lib.R'))
+         source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
          x$breakPointRefined <- FALSE
          out <- tryCatch({
                             o <- gintools::refine_breakpoints(x, counts.col = 'reads')

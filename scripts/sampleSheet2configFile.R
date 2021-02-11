@@ -1,43 +1,40 @@
-library(RMySQL)
 library(dplyr)
 library(stringr)
+library(RMySQL)
+options(stringsAsFactors = FALSE, useFancyQuotes = FALSE)
 
-f <- '201004_M03249_0101_000000000-JBCKB.csv'
-outputFile <- 'wistarSampleConfig.csv'
 
-refGenomeName <- 'hg38'
-refGenomeBLATdb <- '/home/everett/data/sequenceDatabases/BLAT/hg38/hg38.2bit'
-vectorSeqFile <- '/home/everett/data/sequenceDatabases/FASTA/HIV-1.ff'
-u5_hmm <- '/home/everett/projects/AAVengeR/data/u5_100.hmm'
-u3_hmm <- '/home/everett/projects/AAVengeR/data/u3_100_rc.hmm'
-u5_breakOverRead <- 'TGCTAGAGATTT'
-u3_breakOverRead <- 'TGGATGGAAGCA'
+sampleSheet <- '/data/sequencing/Illumina-archive/210122_M00281_0669_000000000-DB6TK/SampleSheet.csv'
+outputFile <- 'LINE1SampleConfig.csv'
 
-# Read in sample data & subset to the subjects in this report group.
+f <- readLines(sampleSheet)
+s <- read.csv(textConnection(f[(which(grepl('\\[metaData\\]', f))+1):length(f)]), header = TRUE)
+
+
 invisible(sapply(dbListConnections(MySQL()), dbDisconnect))
 dbConn  <- dbConnect(MySQL(), group='specimen_management')
-samples <- dbGetQuery(dbConn, 'select * from gtsp')
+gtsp <- dbGetQuery(dbConn, 'select * from gtsp')
 dbDisconnect(dbConn)
 
-d <- read.csv(f, header = TRUE)
+samples <- sub('\\-\\d+', '', s$alias)
+subjects <- gtsp[match(samples, gtsp$SpecimenAccNum),]$Patient
+i <- which(is.na(subjects))
+subjects[i] <- sub('\\-\\d+$', '', samples[i])
 
-o <- str_split(d$SampleName, '[\\-_]')
+r <- tibble(subject = subjects,
+            sample = samples,
+            replicate = str_extract(s$alias, '(\\d+)$'),
+            adriftRead.linkerBarcode.start = 1,
+            adriftRead.linkerBarcode.end = str_locate(s$linkerSequence, 'NNNNNNNNNNNN')[,1]-1,
+            adriftRead.linker.seq = s$linkerSequence,
+            index1.seq = s$bcSeq,
+            anchorRead.identification = "UTR,GCTGATTATGATCCGGCTGCCTCGCGCGTTTCGGTGATGACGGTGAAAACCTCTGACACATGCAGCTCCCGGAGACGGTCACAGCTTGTCTGTAAGCGGATGCCGGGAGCAGACAAGCCCGTCAGGGCGCGTCAGCGGGTGTTGGCGGGTGTCGGGGCGCAG",
+            anchorRead.seqFilter.file = "/home/everett/data/BushmanGeneTherapy/vectorSequences/5UTR_LINE1_transgene.fa",
+            refGenome.id = 'mm9',
+            adriftRead.linkerRandomID.start =  str_locate(s$linkerSequence, 'NNNNNNNNNNNN')[,1],
+            adriftRead.linkerRandomID.end = str_locate(s$linkerSequence, 'NNNNNNNNNNNN')[,2])
 
-r <- tibble(subject = samples[match(unlist(lapply(o, '[[', 1)), samples$SpecimenAccNum),]$Patient,
-                sample = paste0(unlist(lapply(o, '[[', 1)), '_', unlist(lapply(o, '[[', 3))),
-                replicate = unlist(lapply(o, '[[', 2)),
-                breakReadLinkerBarcode.start = 1,
-                breakReadLinkerBarcode.end = nchar(str_match(d$linker, '[^N]+')),
-                breakReadLinkerSeq = d$linker,
-                index1Seq = d$barcode,
-                virusLTRseq = ifelse(grepl('u5', sample), u5_hmm, u3_hmm),
-                refGenomeBLATdb = refGenomeBLATdb,
-                virusRead.overReadSeq = 'AGTCCCTTAAGCGGAG',
-                breakRead.overReadSeq = ifelse(grepl('u5', sample), u5_breakOverRead, u3_breakOverRead),
-                breakReadLinkerRandomID.start = breakReadLinkerBarcode.end + 1,
-                breakReadLinkerRandomID.end = breakReadLinkerBarcode.end + 13,
-                refGenomeName = refGenomeName,
-                vectorSeqFile = vectorSeqFile)
-                
-write.csv(r, file = outputFile, quote = FALSE)
-                
+r$anchorRead.identification <- dQuote(r$anchorRead.identification)
+
+write.csv(r, file = outputFile)
+
