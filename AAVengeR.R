@@ -12,12 +12,18 @@ options(stringsAsFactors = FALSE)
 # Read the config file.
 # This file contains processing parameters and also points to the sample configuration file
 # which contains sample specific parameters.
-#configFile <- commandArgs(trailingOnly = TRUE)
-#if(! file.exists(configFile)) stop('Error -- configuration file not found.')
-#config  <- read_yaml(configFile)
-#source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
 
-config <- read_yaml('/home/everett/projects/AAVengeR_runs/configs/LINE1.yml')
+
+# Start test data.
+# /home/opt/R-3.4.0/bin/Rscript AAVengeR.R data/testData/config.yml
+
+configFile <- commandArgs(trailingOnly = TRUE)
+if(! file.exists(configFile)) stop('Error -- configuration file not found.')
+config  <- read_yaml(configFile)
+
+# IDE override.
+#config <- read_yaml('data/testData/config.yml')
+
 source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
 
 config$startTime <- ymd_hms(format(Sys.time(), "%y-%m-%d %H:%M:%S"))
