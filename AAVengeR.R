@@ -9,13 +9,9 @@ library(gintools)
 library(lubridate)
 options(stringsAsFactors = FALSE)
 
-# Read the config file.
-# This file contains processing parameters and also points to the sample configuration file
-# which contains sample specific parameters.
-
-
-# Start test data.
-# /home/opt/R-3.4.0/bin/Rscript AAVengeR.R data/testData/config.yml
+# To run AAVengeR in RStudio, replace the following three lines with
+# this line, edit to point to the intended configuration file.
+# config <- read_yaml('data/testData/config.yml')
 
 #configFile <- commandArgs(trailingOnly = TRUE)
 #if(! file.exists(configFile)) stop('Error -- configuration file not found.')
@@ -23,8 +19,6 @@ options(stringsAsFactors = FALSE)
 
 # IDE override.
 config <- read_yaml('data/plasmid_data/config.yml')
-
-source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
 
 config$startTime <- ymd_hms(format(Sys.time(), "%y-%m-%d %H:%M:%S"))
 
@@ -62,6 +56,7 @@ if(config$indexReads.rc) samples$index1Seq <- as.character(reverseComplement(DNA
 if('alignment.removeVectorReadPairs' %in% names(config) &  config$alignment.removeVectorReadPairs == TRUE & !'anchorRead.seqFilter.file' %in% names(samples)){
   stop('A anchorRead.seqFilter.file column must be defined in your sample config file if alignment.removeVectorReadPairs is defined in you config file.')
 }
+
 
 if('anchorRead.seqFilter.file' %in% names(samples)) checkConfigFilePaths(samples$anchorRead.seqFilter.file)
 if(! 'subject' %in% names(samples))   samples$subject <- 'subject'

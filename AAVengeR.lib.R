@@ -120,7 +120,7 @@ logMsg <- function(config, msg, logFile = '~/log', append = TRUE){
 
 
 checkConfigFilePaths <- function(files){
-  invisible(sapply(unique(samples$refGenomeBLATdb), function(file){ 
+  invisible(sapply(unique(files), function(file){ 
     if(! file.exists(file)){
       logMsg(config, paste0('Error. "', file, '" does not exist.'), config$logFile)
       stop(paste0('Stopping AVVengeR -- "', file, '" not found error.'))
