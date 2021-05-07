@@ -17,12 +17,12 @@ options(stringsAsFactors = FALSE)
 # Start test data.
 # /home/opt/R-3.4.0/bin/Rscript AAVengeR.R data/testData/config.yml
 
-configFile <- commandArgs(trailingOnly = TRUE)
-if(! file.exists(configFile)) stop('Error -- configuration file not found.')
-config  <- read_yaml(configFile)
+#configFile <- commandArgs(trailingOnly = TRUE)
+#if(! file.exists(configFile)) stop('Error -- configuration file not found.')
+#config  <- read_yaml(configFile)
 
 # IDE override.
-#config <- read_yaml('data/testData/config.yml')
+config <- read_yaml('data/plasmid_data/config.yml')
 
 source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
 
@@ -424,7 +424,7 @@ logReport <- bind_rows(lapply(split(logReport, logReport$sample), function(x){
 
 logMsg(config, 'Summary of read attrition from all computational nodes.\n\n', file.path(config$outputDir, 'logs', 'log'))
 write.table(logReport, sep = '\t', col.names = TRUE, row.names = FALSE, quote = FALSE, file = file.path(config$outputDir, 'logs', 'log'), append = TRUE)
-
+write.table(logReport, sep = '\t', col.names = TRUE, row.names = FALSE, quote = FALSE, file = file.path(config$outputDir, 'logs', 'attrition.csv'))
 
 # Collate demultiplexed reads using file name snibets from tmp directory to sampleReads directory.
 collateSampleReads('anchorReads')
