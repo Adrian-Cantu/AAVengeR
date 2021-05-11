@@ -1,0 +1,100 @@
+---
+title: "Plasmid insertions"
+output: pdf_document
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+header-includes: 
+  \usepackage{longtable}
+---
+
+AVVenger was run twice on Aradhana's run (210426\_M03249\_0176\_000000000-G7P6T), firstly using the dog genome as 
+reference and options ```sequence.qualTrim.code: '+'```). secondly using the heavy chain plasmid with the ITR and cassette removed 
+(HC\_noCassette\_noITR.fasta) and options  ```sequence.qualTrim.code: '+' , alignment.removeVectorReadPairs: FALSE```.
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+suppressMessages(library("tidyverse"))
+
+plasmid_sites <- readRDS('plasmid_data/out1/sites.rds')
+dog_sites <- readRDS('Aradhana_data/output_10Q/sites.rds')
+
+all_sites <- rbind(plasmid_sites,dog_sites)
+
+tmp_sites <- all_sites %>%
+  mutate(insetion_type=
+           as.factor(ifelse(startsWith(as.character(seqnames), 'chr'),'dog','plasmid')),
+         readID.list=NULL,
+         ltrRepSeq=NULL,
+         ltrRepSeq2=NULL) 
+all_sites_clean <-  group_by(tmp_sites,sample,replicate) %>% 
+  mutate(relAbund=estAbund/sum(estAbund)) %>% ungroup() %>% arrange(sample,replicate)
+
+
+all_sites_summ <- all_sites_clean %>% group_by(sample,replicate) %>% 
+  summarise(plasmid_relAbund=sum(relAbund*ifelse(insetion_type=="plasmid",1,0)),
+            dog_relAbund=sum(relAbund*ifelse(insetion_type=="dog",1,0))) %>%
+#  mutate(dog_sd=sd(dog_relAbund),plasmid_sd=sd(plasmid_relAbund)) %>%
+  mutate_if(is.numeric, ~replace(., is.na(.), 0)) %>%
+  ungroup()
+
+long_all_sites_summ <- all_sites_summ %>%
+  gather(insertion_type,relAbund, plasmid_relAbund,dog_relAbund)# %>%
+#  mutate(sd=ifelse(insertion_type=='plasmid_relAbund',plasmid_sd,dog_sd),
+#         plasmid_sd=NULL,
+#         dog_sd=NULL)
+```
+
+# Insertion sites detected
+
+No insertion sites where detected in the control samples (as expected). Only insertion sites to the plasmid sequence were detected in the plasmid samples (also as 
+expected). Both dog and plasmid insertion where detected in one of the dog samples. 
+
+```{r sample_table, results='asis'}
+library(xtable)
+all_samples <-c("GTSP4175","GTSP4176","GTSP4181","GTSP4182",
+                "UninfectedControl-210422-MN","NoTemplateControl-210422-MN")
+sample_type <-c("plasmid","plasmid","dog","dog","control","control")
+count_ins_dog <- sapply(all_samples,function(x){sum(dog_sites$sample==x)})
+count_ins_plasmid <- sapply(all_samples,function(x){sum(plasmid_sites$sample==x)})
+sample_desc <- as.data.frame(t(rbind(sample_type,count_ins_dog,count_ins_plasmid)))
+pp_table <- xtable(sample_desc)
+align(pp_table) <- "|l|ccc|"
+print(pp_table,comment=F,floating=FALSE)
+```
+
+
+# Relative abundance
+
+Relative abundance of plasmid insertion sites in the dog samples ranges from 0\% to 20\%
+
+```{r table,results='asis'}
+
+print_table <- xtable(all_sites_summ)
+align(print_table) <- "|l|lrrr|"
+print(print_table, comment=F,include.rownames = FALSE,hline.after = c(-1,0,4,5,9),floating=FALSE)
+
+```
+
+# Boxplot
+
+```{r boxplot}
+ggplot(long_all_sites_summ, aes(x=sample, y=relAbund,fill=insertion_type)) + 
+  geom_boxplot()
+
+```
+
+# Position of instetions into the plasmid backbone
+
+insertion events can be observed across the length of the plasmid. Insertions at the start located at the start and end might be the expected construct.
+
+```{r l_table,results='asis'}
+names(sample_type) <- all_samples
+plasmid_sites_summ <- plasmid_sites %>% 
+  transmute(sample=sample,sample_type=sample_type[sample],replicate=replicate,
+            position=position,strand=strand,estAbund=estAbund) %>%
+  arrange(position) %>% mutate(position=paste0(position,strand),strand=NULL)
+l_table <- xtable(plasmid_sites_summ)
+align(l_table) <- "|l|lcccc|"
+print(l_table, comment=F,floating=FALSE,
+  tabular.environment = "longtable",include.rownames = FALSE)
+
+```
