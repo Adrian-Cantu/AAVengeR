@@ -1,0 +1,180 @@
+---
+title: "Plasmid_and_cassettes_insertions_report"
+output: pdf_document
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+header-includes: 
+  \usepackage{longtable}
+---
+
+AVVenger was run on Aradhana's sequences (210426\_M03249\_0176\_000000000-G7P6T) using a database that includes the dog genome, the plasmid backbone, and the Heavy and light chain cassettes (dog\_plus\_plasmid_parts.2bit). Options used were ```sequence.qualTrim.code: '+' , alignment.removeVectorReadPairs: FALSE```.
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+suppressMessages(library("tidyverse"))
+library(kableExtra)
+
+get_insertion_type <- function(x) {
+  xx<-as.character(x)
+  x <- ifelse(startsWith(xx, 'chr'),'dog',
+    ifelse(startsWith(xx, 'LC_plasmid_backbone'),"plasmid_BB",
+      ifelse(startsWith(xx, 'LightChain'),'LightChain','HeavyChain')
+    )
+  )
+  return(x)
+}
+
+all_sites<- readRDS('dog_plus_plasmid/out1/sites.rds')
+
+tmp_sites <- all_sites %>%
+  mutate(insertion_type=
+           as.factor(get_insertion_type(seqnames)),
+         readID.list=NULL,
+         ltrRepSeq=NULL,
+         ltrRepSeq2=NULL) 
+
+
+all_sites_clean <-  group_by(tmp_sites,sample,replicate) %>% 
+  mutate(relAbund=estAbund/sum(estAbund)) %>% ungroup() %>% arrange(sample,replicate)
+
+
+all_sites_summ <- all_sites_clean %>% group_by(sample,replicate) %>% 
+  summarise(dog_relAbund=sum(relAbund*ifelse(insertion_type=="dog",1,0)),
+            plasmid_BB_relAbund=sum(relAbund*ifelse(insertion_type=="plasmid_BB",1,0)),
+            LC_relAbund=sum(relAbund*ifelse(insertion_type=="LightChain",1,0)),
+            HC_relAbund=sum(relAbund*ifelse(insertion_type=="HeavyChain",1,0))
+            ) %>%
+  mutate_if(is.numeric, ~replace(., is.na(.), 0)) %>%
+  ungroup()
+
+long_all_sites_summ <- all_sites_summ %>%
+  gather(insertion_type,relAbund, plasmid_BB_relAbund,
+         dog_relAbund,LC_relAbund,HC_relAbund)
+```
+
+# Insertion sites detected
+
+No insertion sites where detected in the control samples (as expected). Only insertion sites to the plasmid and corresponding cassette were detected in the plasmid samples (also as expected). Dog, plasmid backbone and insertion to both cassettes were detected in one of the dog samples. 
+
+```{r sample_table, results='asis'}
+library(xtable)
+all_samples <-c("GTSP4175","GTSP4176","GTSP4181","GTSP4182",
+                "UninfectedControl-210422-MN","NoTemplateControl-210422-MN")
+sample_type <-c("plasmid","plasmid","dog","dog","control","control")
+
+count_ins_dog <- sapply(all_samples,function(x){sum(
+  (all_sites_clean$sample==x) & (all_sites_clean$insertion_type=='dog'))})
+count_ins_plasmid_BB <- sapply(all_samples,function(x){sum(
+  (all_sites_clean$sample==x) & (all_sites_clean$insertion_type=='plasmid_BB'))})
+count_ins_LC <- sapply(all_samples,function(x){sum(
+  (all_sites_clean$sample==x) & (all_sites_clean$insertion_type=='LightChain'))})
+count_ins_HC <- sapply(all_samples,function(x){sum(
+  (all_sites_clean$sample==x) & (all_sites_clean$insertion_type=='HeavyChain'))})
+
+sample_desc <- as.data.frame(t(rbind(sample_type,count_ins_dog,
+                                     count_ins_plasmid_BB,count_ins_LC,count_ins_HC)))
+colnames(sample_desc) <- c("Sample type","dog","plasmid BB","LC","HC")
+pp_table <- xtable(sample_desc,caption = c('Counts of insertion sites'))
+align(pp_table) <- "|l|ccccc|"
+print(pp_table,comment=F)
+```
+
+
+# Relative abundance
+
+Relative abundance of dog insertion sites in the dog samples ranges from 57\% to 68\%
+
+```{r table,results='asis'}
+
+print_table <- xtable(all_sites_summ)
+align(print_table) <- "|l|lrrrrr|"
+print(print_table, comment=F,include.rownames = FALSE,
+      hline.after = c(-1,0,4,7,11),floating=FALSE)
+
+```
+
+# Boxplot
+
+```{r boxplot}
+ggplot(long_all_sites_summ, aes(x=sample, y=relAbund,fill=insertion_type)) + 
+  geom_boxplot()
+
+```
+
+# Position of instetions into the plasmid backbone
+
+Insertion events can be observed across the length of the plasmid. Insertions located at the start and end might be the expected construct.
+
+```{r l_table,results='asis'}
+names(sample_type) <- all_samples
+sites_l_table <- all_sites[!startsWith(all_sites$seqnames, 'chr'),] %>% 
+  transmute(sample=sample,
+            sample_type=sample_type[sample],
+            replicate=replicate,
+            insertion_type=as.factor(get_insertion_type(seqnames)),
+            position=position,
+            strand=strand,
+            estAbund=estAbund) %>%
+arrange(position) %>% mutate(position=paste0(position,strand),strand=NULL)
+
+sites_l_table[sites_l_table$insertion_type=="plasmid_BB",] %>% mutate(insertion_type = NULL) %>%
+kable( "latex", booktabs = TRUE, longtable = TRUE, caption = "Plasmid backbone instertions") %>%
+  kable_styling(latex_options = c("hold_position", "repeat_header"))
+
+```
+
+
+# Position of insertion into the Heavy chain cassette
+
+```{r l_table_HC,results='asis'}
+sites_l_table[sites_l_table$insertion_type=="HeavyChain",] %>% mutate(insertion_type = NULL) %>%
+kable( "latex", booktabs = TRUE, longtable = TRUE, caption = "Heavy chain cassette instertions") %>%
+  kable_styling(latex_options = c("hold_position", "repeat_header"))
+```
+
+\newpage
+
+# Position of insertion into the Light chain cassette
+
+```{r l_table_LC,results='asis'}
+sites_l_table[sites_l_table$insertion_type=="LightChain",] %>% mutate(insertion_type = NULL) %>%
+kable( "latex", booktabs = TRUE, longtable = TRUE, caption = "Light chain cassette instertions") %>%
+  kable_styling(latex_options = c("hold_position", "repeat_header"))
+```
+
+```{r l_dog,results='asis'}
+
+library(gt23)
+suppressMessages(library(BSgenome.Cfamiliaris.UCSC.canFam3))
+
+dog_sites_l_table_tmp <- all_sites[startsWith(all_sites$seqnames, 'chr'),]
+dog_sites_l_table_tmp$refGenome <- 'mm9'
+dog_sites_l_table_tmp$start <- dog_sites_l_table_tmp$position
+dog_sites_l_table_tmp$end <- dog_sites_l_table_tmp$position
+ 
+s <- GenomicRanges::makeGRangesFromDataFrame(data.frame(dog_sites_l_table_tmp), keep.extra.columns = TRUE)
+suppressMessages(s <- gt23::annotateIntSites(s))
+s <- data.frame(s)
+
+  
+dog_sites_l_table <- s %>% transmute(sample=sample,
+            sample_type=sample_type[sample],
+            replicate=replicate,
+            insertion_type=as.factor(get_insertion_type(seqnames)),
+            position=position,
+            strand=strand,
+            estAbund=estAbund,
+            inFeature=inFeature,
+            nearestFeature=nearestFeature,
+            nearestOncoFeature=nearestOncoFeature,
+            seqnames=seqnames
+            ) %>%
+            arrange(seqnames,position) %>%
+            mutate(position=paste0(seqnames,strand,position),strand=NULL,seqnames=NULL,insertion_type = NULL,sample_type=NULL)
+            
+  
+dog_sites_l_table %>%  kable( "latex", booktabs = TRUE, longtable = TRUE, caption = "Dog instertions") %>%
+            kable_styling(latex_options = c("hold_position", "repeat_header"))
+
+
+```
+

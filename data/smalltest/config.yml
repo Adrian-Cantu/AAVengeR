@@ -1,0 +1,97 @@
+# General settings changed for each run. 
+#--------------------------------------------------------------------------------------------------
+softwareDir:  /home/adrian/AAVengeR
+outputDir:    data/smalltest/out1
+demultiplexing.CPUs: 22
+genomAlignment.CPUs: 22
+
+adriftReadsFile:  data/smalltest/R1_s.fastq.gz
+anchorReadsFile:  data/smalltest/R2_s.fastq.gz
+index1ReadsFile:  data/smalltest/I1_s.fastq.gz
+sampleConfigFile: data/smalltest/sampleConfig.csv
+
+# Method to recognize LTR / ITR sequences (blastProvidedTemplates, lentiViralHMM, staticLTRseq)
+anchorReads.captureLTRseq.method: blastProvidedTemplates
+
+
+# Sequence chunking and quality filtering.
+#--------------------------------------------------------------------------------------------------
+sequence.chunk.size:  50
+alignment.chunk.size: 50
+sequence.qualTrim.code: '5'
+#  !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHI
+#  | |       |         |         |        |
+#  0.2.......10........20........30.......40
+sequence.qualTrim.minLength: 75
+
+
+# Barcode settings.
+# Setting maxMismatch parameters enables specific tests.
+#--------------------------------------------------------------------------------------------------
+index1Reads.maxMismatch: 0
+adriftReads.linkerBarcode.maxMismatch: 1
+indexReads.rc: FALSE
+correctGolayIndexReads: TRUE
+
+
+# Fragment size settings.
+#--------------------------------------------------------------------------------------------------
+fragments.maxLength: 2500
+fragments.minLength: 25
+trimmedRead.minLength: 25   # Min. number of genomic NTs.
+
+
+# Fragment processing.
+#--------------------------------------------------------------------------------------------------
+fragmentProcessing.rep.maxReads: 5000   # When evaulating leading sequences, we do not want to overload the aligner, here we set a max afterwhich we sample.
+fragmentProcessing.rep.maxDifference: 0.15
+fragmentProcessing.assemblyConflictResolution: 0.66
+
+
+# LTR start tests -- test the begining of LTR sequences.
+# This is useful for reducing the number of reads to be tested later in the pipeline.
+# Defining anchorReads.startTest.maxMismatch enables the test.
+#--------------------------------------------------------------------------------------------------
+anchorReads.minLTRseqLength: 10
+anchorReads.startTest.length: 10
+anchorReads.startTest.maxMismatch: 0
+
+
+# LTR capture settings.
+#--------------------------------------------------------------------------------------------------
+anchorReads.identification.maxAlignmentStart: 3
+anchorReads.identification.minPercentSeqID: 90
+anchorReads.identification.maxGapOpen: 1
+anchorReads.identification.repSeqEditDistMaxPercentage: 5
+anchorReads.identification.HMMmaxStartPos: 3
+anchorReads.identification.HMMminEval: 0.0001
+anchorReads.identification.minLength: 10
+
+
+# Alignment parameters. 
+#--------------------------------------------------------------------------------------------------
+alignment.removeVectorReadPairs: FALSE   # default TRUE
+alignment.removeMultiHitReadPairs: TRUE
+alignment.seqFilter.minPercentID: 95
+alignment.seqFilter.minPercentQueryCoverage: 75
+alignment.refGenome.minPercentID: 98
+alignment.refGenom.minPercentQueryCoverage: 90
+
+
+# Fragment standardization.
+#--------------------------------------------------------------------------------------------------
+removeReadFragsWithSameRandomID: TRUE
+standardizeSitesBy: subject
+standardizeBreakPointsBy: replicate
+
+
+# External software setup.
+#--------------------------------------------------------------------------------------------------
+command.blat:        /home/everett/ext/blat
+command.bwa:         /home/everett/ext/bwa
+command.makeblastdb: /home/everett/ext/blast+/bin/makeblastdb
+command.blastn:      /home/everett/ext/blast+/bin/blastn
+command.samtools:    /home/everett/ext/samtools/bin/samtools
+command.cutadapt3:   /usr/bin/cutadapt3
+command.python2:     /usr/bin/python2
+command.muscle:      /home/everett/ext/muscle

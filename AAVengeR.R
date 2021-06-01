@@ -18,7 +18,8 @@ options(stringsAsFactors = FALSE)
 #config  <- read_yaml(configFile)
 
 # IDE override.
-config <- read_yaml('data/plasmid_data/config.yml')
+config <- read_yaml('data/dog_plus_plasmid_transgene/config.yml')
+source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
 
 config$startTime <- ymd_hms(format(Sys.time(), "%y-%m-%d %H:%M:%S"))
 
@@ -69,7 +70,7 @@ if(any(duplicated(samples$uniqueSample))) stop('Error -- all subject, sample, re
 cluster <- makeCluster(config$demultiplexing.CPUs)
 clusterExport(cluster, c('config', 'samples'))
 
-# Quality trim virus reads and break reads.
+# Quality trim virus reads and break reads. -- this will generate a race
 invisible(parLapply(cluster, 
                     list(c(config$adriftReadsFile,  config$sequence.chunk.size, 'adriftReads',  file.path(config$outputDir, 'seqChunks')),
                          c(config$anchorReadsFile,  config$sequence.chunk.size, 'anchorReads',  file.path(config$outputDir, 'seqChunks'))), 
@@ -144,9 +145,10 @@ config$startTime <- ymd_hms(format(Sys.time(), "%y-%m-%d %H:%M:%S"))
 if(! dir.exists(file.path(config$outputDir, 'logs', 'cutadapt'))) dir.create(file.path(config$outputDir, 'logs', 'cutadapt'))
 if(! dir.exists(file.path(config$outputDir, 'tmp', 'cutadapt'))) dir.create(file.path(config$outputDir, 'tmp', 'cutadapt'))
 
-
+f <- "data/smalltest/out1/seqChunks/10"
 invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks'), full.names = TRUE), function(f){
 #invisible(lapply(list.files(file.path(config$outputDir, 'seqChunks'), full.names = TRUE), function(f){
+  
   library(ShortRead)
   library(tidyverse)
   source(file.path(config$softwareDir, 'AAVengeR.lib.R'))
@@ -157,7 +159,7 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
   chunk.n <- unlist(str_match_all(f, '(\\d+)$'))[2]
   logFile <- file.path(config$outputDir, 'logs', paste0('seqChunk_', chunk.n, '.log'))
   
-   
+  r <- 1
   # Loop through samples in sample data file to demultiplex and apply read specific filters.
   invisible(lapply(1:nrow(samples), function(r){
     r <- samples[r,]
@@ -192,7 +194,7 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
       index1Reads <- reads[[1]];  anchorReads  <- reads[[2]]; adriftReads  <- reads[[3]]
       log.report$demultiplexedReads <- length(index1Reads)
     }
-    
+
     # Test the start of anchor reads (static or blast search options only)
     # Not compatible with anchorReads.captureLTRseq.method = 'lentiViralHMM'
     v1 <- rep(TRUE, length(anchorReads))
@@ -226,7 +228,7 @@ invisible(parLapply(cluster, list.files(file.path(config$outputDir, 'seqChunks')
       stop('Error - No LTR capture method provided.')
     }
     
-    
+    # aqui me wuede hoy --------------
     
     # Here we require all ITR / LTR remnants to be at least config$anchorReads.identification.minLength NTs because we will use them as adaptor sequences for cutadapt 
     if(! all(names(o$reads) == o$LTRs$id)) stop('LTRseq capture error.')
@@ -831,7 +833,7 @@ sites$posIDcluster <- NULL
 
 saveRDS(sites, file = file.path(config$outputDir, 'sites.rds'))
 
-
+save(list = ls(all=TRUE), file = file.path(config$outputDir, 'savePoint_final.RData'))
 #---
 
 

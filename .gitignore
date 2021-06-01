@@ -4,3 +4,5 @@ data/blatDBs
 *.html
 *.png
 *.pyc
+.Rhistory
+.Rprofile
